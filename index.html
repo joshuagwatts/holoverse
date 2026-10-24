@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#020204">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="css/style.css?v=1">
+<link rel="stylesheet" href="css/style.css?v=2">
 <script type="importmap">
 {
   "imports": {
@@ -26,8 +26,8 @@
 </script>
 <!-- build 34: vendored QR libs (classic scripts -> window.qrcode / window.jsQR).
      Local files, not a CDN — the couch co-op ceremony must work offline. -->
-<script src="js/vendor/qrcode.js?v=1"></script>
-<script src="js/vendor/jsqr.js?v=1"></script>
+<script src="js/vendor/qrcode.js?v=2"></script>
+<script src="js/vendor/jsqr.js?v=2"></script>
 <!-- HOLOVERSE build 1: no service worker yet — the page always loads
      fresh from Pages (document is no-cache, assets carry ?v= busts). -->
 </head>
@@ -624,6 +624,12 @@
   <span class="fight-prompt-sub">tap or press F to fight</span>
 </div>
 
+<!-- HOLOVERSE build 2: instrument-zone prompt — shown while standing in
+     an instrument ring in the sound room with the jam panel closed. -->
+<div id="zone-prompt" style="display:none" role="button" aria-label="play this instrument">
+  <span id="zone-prompt-text">🥁 DRUM KIT — tap to play</span>
+</div>
+
 <!-- start overlay: the click also unlocks WebAudio -->
 <div id="start-overlay">
   <h1>HOLOVERSE</h1>
@@ -643,6 +649,6 @@
 <!-- minimal touch joystick UI -->
 <div id="joy-base"><div id="joy-knob"></div></div>
 
-<script type="module" src="js/game.js?v=1"></script>
+<script type="module" src="js/game.js?v=2"></script>
 </body>
 </html>

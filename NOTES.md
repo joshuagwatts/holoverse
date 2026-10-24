@@ -20,10 +20,38 @@ Target live: https://joshuagwatts.github.io/holoverse/
 - js/vendor: jsqr.js, qrcode.js
 - NOT copied: sw.js (service worker — evaluate later), tools/ (LIMBO-scoped bump tool)
 
-## Progress log
-- 2026-10-24: tree copied to ~/workspace/holoverse/. Exploring.
-- 2026-10-24: repo joshuagwatts/holoverse created (public), Pages enabled →
-  https://joshuagwatts.github.io/holoverse/
+## Phase 1 — SHIPPED LIVE (2026-10-24, commit e7810834, build 1)
+- Repo joshuagwatts/holoverse (public) + Pages; live boot verified headless
+  (title HOLOVERSE, build stamp 1, 9 nexus portals incl. "fight", 0 page errors);
+  served bytes == local for index/game/net/avatar/css.
+- Rebrand: title/overlay/manifest/HUD copy; APP_ID 'holoverse_by_holowatts'
+  (net fully isolated from limboverse); NO service worker in holoverse
+  (registration stripped; limbo sw.js not shipped). Build pins start at ?v=1.
+- VRM AVATARS (js/avatar.js): import .vrm in Settings → Avatar. Own file in
+  IndexedDB 'holoverse'/'avatars' keyed by sha-256; localStorage pointer
+  'holo_avatar'. Wisp payload gained `a:{h:hash16, n:name}` (rides both the
+  data channel and the nostr relay fallback). Peers: cache hit → render the
+  real VRM (procedural walk/fly bone swing + spring bones, baseYaw composed
+  per the SMASHVR VRM0 lesson); cache miss → targeted avatarReq/avatarChunk
+  transfer (48KB base64 slices, batches of 6, resumable, 24MB cap) → stored →
+  rendered. Orb + nameplate until then; orb returns if they remove it.
+- REMOTE-AVATAR TRUTH: other players DO see your actual VRM — the file
+  itself travels peer-to-peer once per peer (then it's cached on their
+  device across sessions). Verified in-sandbox by feeding a real 10.9MB
+  SeedSan through the chunk handler: reassembled, stored, rendered;
+  screenshot shows Mushy + SeedSan peers standing in the Nexus.
+  The one unverifiable-here hop is the live data channel itself (VM blocks
+  UDP) — the transfer code is a line-for-line mirror of the jukebox
+  phone-file path that works in limboverse production.
+- FIGHT PORTAL: 9th Nexus portal, red crossed-swords art, label "SMASHVR
+  ARENA". External portal: proximity shows a prompt (tap or F) →
+  window.open('https://joshuagwatts.github.io/smashvr/', '_blank').
+  Smoke test (~/workspace/limbo-test/holoverse-smoke.mjs): ALL PASS —
+  boot, nexus entry, portal list, prompt show/hide, local import, peer
+  from cache, peer via chunk feed, 0 page errors.
+
+## Progress log (cont.)
+- Phase 2 next: instrument zones in the sound room.
 
 ## Phase 3 amendments (user decisions, 2026-10-24 — apply when Phase 3 starts)
 - A1 NO SPOTIFY (queue rule): a source is only queueable if it can deliver

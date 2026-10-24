@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=1';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=1';
-import { CouchNet } from './couch.js?v=1';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=1';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=1';
-import * as Avatar from './avatar.js?v=1';
+import { AudioEngine } from './audio.js?v=2';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=2';
+import { CouchNet } from './couch.js?v=2';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=2';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=2';
+import * as Avatar from './avatar.js?v=2';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -7899,6 +7899,12 @@ function buildJamChords() {
 
 if (jamBtn) {
   jamBtn.addEventListener('click', () => {
+    // HOLOVERSE build 2: no zone, no panel — the ring IS the menu.
+    if (!jam.open && !jamZone) {
+      addSystemLine('the instruments live in their rings — stand in one to play');
+      jamBtn.blur();
+      return;
+    }
     setJamPanel(!jam.open);
     jamBtn.blur();
   });
@@ -7916,7 +7922,17 @@ if (jamMicLoopEl) jamMicLoopEl.addEventListener('click', () => { jamMicToggleLoo
 if (jamTalkBtnEl) jamTalkBtnEl.addEventListener('click', () => { voiceTalkToggle(); jamTalkBtnEl.blur(); });
 if (jamInstTabsEl) {
   jamInstTabsEl.querySelectorAll('.jam-inst-tab').forEach((b) => {
-    b.addEventListener('click', () => { selectJamInstrument(b.dataset.inst); b.blur(); });
+    b.addEventListener('click', () => {
+      // HOLOVERSE build 2: tabs are indicators now — walk to the ring.
+      if (!jamZone || jamZone.id !== b.dataset.inst) {
+        addSystemLine(jamZone
+          ? `you're at the ${jamZone.name.toLowerCase()} — that one lives in its own ring`
+          : 'stand in an instrument ring to play');
+        b.blur();
+        return;
+      }
+      selectJamInstrument(b.dataset.inst); b.blur();
+    });
   });
 }
 if (jamMetroToggleEl) jamMetroToggleEl.addEventListener('click', () => {
@@ -8357,6 +8373,90 @@ function buildSoundRoom(textures) {
   scene.add(wallFrame);
   wallStates.north.mesh = wallMesh;
 
+  // HOLOVERSE build 2: instrument zones. Each instrument lives in its own
+  // ring on the floor — you play it by standing in it (see zoneTick).
+  // Props are simple primitives in the instrument's jam color.
+  const zones = [];
+  {
+    const propMat = new THREE.MeshStandardMaterial({ color: 0x16161f, roughness: 0.55, metalness: 0.45 });
+    const darkMat = new THREE.MeshStandardMaterial({ color: 0x0b0b12, roughness: 0.8, metalness: 0.2 });
+    const zoneDefs = [
+      { id: 'drums', name: 'DRUM KIT', icon: '🥁', x: -13, z: -5 },
+      { id: 'lead', name: 'SYNTHESIZER', icon: '🎹', x: 13, z: -5 },
+      { id: 'pad', name: 'HAND PAN', icon: '🛸', x: -13, z: 11 },
+      { id: 'bass', name: 'BASS RIG', icon: '🎸', x: 13, z: 11 },
+    ];
+    for (const def of zoneDefs) {
+      const color = JAM_INSTRUMENTS[def.id].glow;
+      const grp = new THREE.Group();
+      grp.position.set(def.x, 0, def.z);
+      grp.rotation.y = Math.atan2(-def.x, -def.z); // face room centre
+      const ringMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false });
+      const ring = new THREE.Mesh(new THREE.RingGeometry(3.02, 3.4, 48), ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.06;
+      grp.add(ring);
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(3.02, 48),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.05, depthWrite: false }));
+      disc.rotation.x = -Math.PI / 2;
+      disc.position.y = 0.05;
+      grp.add(disc);
+      const label = makeLabel(def.name, 40);
+      label.scale.set(6.4, 1.6, 1);
+      label.position.y = 3.6;
+      grp.add(label);
+      if (def.id === 'drums') {
+        const kick = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 0.7, 24), propMat);
+        kick.rotation.x = Math.PI / 2; kick.position.set(0, 0.85, 0.2); grp.add(kick);
+        const snare = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.32, 20), darkMat);
+        snare.position.set(-1.15, 0.95, -0.3); grp.add(snare);
+        const tom = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.4, 20), propMat);
+        tom.position.set(0.95, 1.2, -0.25); grp.add(tom);
+        for (const cx of [-1.6, 1.6]) {
+          const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 1.7, 8), darkMat);
+          stand.position.set(cx, 0.85, -0.7); grp.add(stand);
+          const cym = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.78, 0.045, 24),
+            new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.3, metalness: 0.9 }));
+          cym.position.set(cx, 1.72, -0.7); cym.rotation.z = cx > 0 ? -0.1 : 0.1; grp.add(cym);
+        }
+        const stool = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.46, 0.5, 16), darkMat);
+        stool.position.set(0, 0.25, 1.6); grp.add(stool);
+      } else if (def.id === 'lead') {
+        const board = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.16, 0.75), propMat);
+        board.position.set(0, 1.05, 0); board.rotation.x = -0.16; grp.add(board);
+        const keys = new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.05, 0.42),
+          new THREE.MeshStandardMaterial({ color: 0xdfe6ee, roughness: 0.4, metalness: 0.1 }));
+        keys.position.set(0, 1.12, 0.08); keys.rotation.x = -0.16; grp.add(keys);
+        for (const lx of [-1.1, 1.1]) {
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.09, 1.05, 0.5), darkMat);
+          leg.position.set(lx, 0.52, 0); grp.add(leg);
+          const spk = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.8, 0.5), darkMat);
+          spk.position.set(lx * 1.7, 0.4, -0.3); grp.add(spk);
+        }
+      } else if (def.id === 'pad') {
+        const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.16, 0.8, 10), darkMat);
+        stand.position.set(0, 0.4, 0); grp.add(stand);
+        const pan = new THREE.Mesh(new THREE.SphereGeometry(0.98, 28, 14, 0, Math.PI * 2, 0, Math.PI * 0.52),
+          new THREE.MeshStandardMaterial({ color: 0xb87333, roughness: 0.32, metalness: 0.9 }));
+        pan.scale.y = 0.55; pan.position.y = 1.12; grp.add(pan);
+        const cushion = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.09, 10, 28), darkMat);
+        cushion.rotation.x = Math.PI / 2; cushion.position.y = 0.82; grp.add(cushion);
+      } else if (def.id === 'bass') {
+        const cab1 = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.05, 0.75), darkMat);
+        cab1.position.set(0, 0.53, 0); grp.add(cab1);
+        const cab2 = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.95, 0.75), darkMat);
+        cab2.position.set(0, 1.53, 0); grp.add(cab2);
+        const grille = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.75),
+          new THREE.MeshStandardMaterial({ color: 0x23202c, roughness: 0.95, metalness: 0.05 }));
+        grille.position.set(0, 1.03, 0.39); grp.add(grille);
+        const head = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.32, 0.55), propMat);
+        head.position.set(0, 2.17, 0); grp.add(head);
+      }
+      scene.add(grp);
+      zones.push({ ...def, r: 3.4, ringMat });
+    }
+  }
+
   // Return portal to the Nexus.
   const { group, ring } = makePortal(makeSoundTexture(), accent, 'RETURN', 1.7, 0.14);
   group.position.set(0, 3, 26);
@@ -8368,6 +8468,7 @@ function buildSoundRoom(textures) {
     key: SOUND_DEF.key, name: SOUND_DEF.name, root: SOUND_DEF.root,
     scene, portals, echoes: [],
     gallery: [], // build 84: gallery replaced by 4 paint walls — no framed pieces now
+    zones, // HOLOVERSE build 2: instrument rings (jam gating)
     spawn: new THREE.Vector3(0, 2, 20), spawnYaw: 0, // face the booth (-Z)
     bound: 'realm',
     anim: {
@@ -13581,6 +13682,80 @@ net.onAvatarChunkCb = (peerId, d) => {
 net.avatarMeta = () => (myAvatar && myAvatarH16) ? { h: myAvatarH16, n: myAvatar.name } : null;
 bootAvatar();
 
+/* ================= HOLOVERSE build 2: instrument zones =================
+   The jam lives in the rings now. Standing in a ring is the ONLY way to
+   open/play that instrument; leaving the ring closes the panel. The tab
+   row stays as an indicator — the room itself is the instrument menu. */
+
+const ZONE_Y_MAX = 6; // come down to the instrument — no sniping from the ceiling
+let jamZone = null;
+const zonePromptEl = document.getElementById('zone-prompt');
+const zonePromptTextEl = document.getElementById('zone-prompt-text');
+let zonePromptFor = undefined; // zone id on the chip (undefined = unset)
+let jamBtnLabelFor = undefined;
+
+function zoneAt(pos) {
+  if (!active || active.key !== SOUND_ROOM_KEY || !active.zones) return null;
+  if (pos.y > ZONE_Y_MAX) return null;
+  for (const z of active.zones) {
+    const dx = pos.x - z.x, dz = pos.z - z.z;
+    if (dx * dx + dz * dz < z.r * z.r) return z;
+  }
+  return null;
+}
+
+function setZonePrompt(zone) {
+  const id = zone ? zone.id : null;
+  if (zonePromptFor === id) return;
+  zonePromptFor = id;
+  if (!zonePromptEl) return;
+  if (zone && !jam.open) {
+    if (zonePromptTextEl) zonePromptTextEl.textContent = `${zone.icon} ${zone.name} — tap to play`;
+    zonePromptEl.style.display = 'flex';
+  } else {
+    zonePromptEl.style.display = 'none';
+  }
+}
+
+function zoneTick(t) {
+  const inSound = !!(active && active.key === SOUND_ROOM_KEY);
+  const z = inSound ? zoneAt(wisp.position) : null;
+  if (active && active.zones) {
+    for (const zone of active.zones) {
+      zone.ringMat.opacity = (z && zone.id === z.id) ? 0.72 + Math.sin(t * 5) * 0.2 : 0.35;
+    }
+  }
+  if (jamBtn) {
+    const lbl = inSound ? (z ? z.id : 'none') : 'off';
+    if (jamBtnLabelFor !== lbl) {
+      jamBtnLabelFor = lbl;
+      jamBtn.textContent = z ? `${z.icon} ${z.name.toLowerCase()}` : '🎵 jam';
+    }
+  }
+  if (z !== jamZone) {
+    const left = jamZone;
+    jamZone = z;
+    if (inSound && jam.open) {
+      if (z) {
+        if (jam.instrument !== z.id) selectJamInstrument(z.id);
+      } else {
+        setJamPanel(false);
+        if (left) addSystemLine(`you left the ${left.name.toLowerCase()} ring — it goes quiet`);
+      }
+    }
+  }
+  if (inSound && jam.open && jamZone && jam.instrument !== jamZone.id) selectJamInstrument(jamZone.id);
+  setZonePrompt(inSound && !jam.open ? jamZone : null);
+}
+
+if (zonePromptEl) {
+  zonePromptEl.addEventListener('click', () => {
+    if (!jamZone) return;
+    selectJamInstrument(jamZone.id);
+    setJamPanel(true);
+  });
+}
+
 function handleWisp(id, d) {
   if (!d || !Array.isArray(d.p)) return;
   // Build 106: wisps now arrive server-wide over the persistent session.
@@ -14183,6 +14358,7 @@ function loop() {
   // Build 108: lane rush takes over flight + camera while a run is live.
   if (rush.active) rushUpdate(dt);
   else { updatePlayer(dt); checkPortals(); checkEchoes(); }
+  zoneTick(clock.elapsedTime); // HOLOVERSE build 2: instrument rings
 
   // Multiplayer: broadcast our wisp, ease remote wisps toward their targets.
   if (started) {
@@ -14268,6 +14444,8 @@ window.__limbo = {
   avatarLocal: () => (myAvatar ? { name: myAvatar.name, h: myAvatarH16 } : null),
   avatarImport: (file) => importAvatarFile(file),
   avatarPeerState: () => [...peerVisuals.values()].map((pv) => ({ id: pv.id, hash: pv.avatarHash, hasVisual: !!pv.avatarVisual, orbVisible: pv.core.visible })),
+  // HOLOVERSE build 2: zone hooks for smoke tests
+  zoneState: () => ({ zone: jamZone ? jamZone.id : null, zones: (active && active.zones) ? active.zones.map((z) => z.id) : null, jamOpen: jam.open, jamInst: jam.instrument }),
   showChatBubble,
   PROXIMITY_R,
   build: net.build,

@@ -2188,3 +2188,14 @@ html { -webkit-text-size-adjust: 100%; }
 }
 .avatar-set-row { display: flex; gap: 8px; margin: 6px 0 4px; }
 .avatar-set-row button { flex: 1; }
+
+/* ================= HOLOVERSE build 2: instrument zone prompt ========= */
+#zone-prompt {
+  position: fixed; left: 50%; bottom: 15%; transform: translateX(-50%);
+  z-index: 65; display: flex; align-items: center; gap: 8px;
+  padding: 11px 22px; border-radius: 999px; cursor: pointer;
+  background: rgba(16, 10, 2, 0.85); border: 1px solid rgba(255, 194, 77, 0.7);
+  box-shadow: 0 0 24px rgba(255, 194, 77, 0.25);
+  color: #ffe9bd; font-size: 14px; letter-spacing: 0.12em;
+  user-select: none; -webkit-user-select: none; white-space: nowrap;
+}
