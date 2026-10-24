@@ -50,8 +50,82 @@ Target live: https://joshuagwatts.github.io/holoverse/
   boot, nexus entry, portal list, prompt show/hide, local import, peer
   from cache, peer via chunk feed, 0 page errors.
 
-## Progress log (cont.)
-- Phase 2 next: instrument zones in the sound room.
+## Phase 2 — SHIPPED LIVE (2026-10-24, commit 25913294, build 2)
+Sound-room instrument zones (world.zones from buildSoundRoom):
+  DRUM KIT 🥁 (-13,-5) · SYNTHESIZER 🎹 (13,-5) · HAND PAN 🛸 (-13,11) ·
+  BASS RIG 🎸 (13,11) — floor ring + prop + floating label each, r=3.4,
+  must be below y=6. zoneTick (per frame): the zone you're in owns the jam
+  UI — jam button relabels to the instrument, a "— tap to play" chip opens
+  the panel on that instrument, tabs refuse other instruments with a hint,
+  walking/flying out closes the panel, ring-to-ring swaps the instrument.
+  Remote jammers unchanged (jamMarkJammer/room list already show who's on
+  what). Smoke (limbo-test/holoverse-zones.mjs): ALL PASS, 0 page errors;
+  screenshot confirms ring + kit + chip render.
+
+## Phase 3 — SHIPPED LIVE (2026-10-24, build 3; worker holoverse-resolve)
+Universal queue on the existing jukebox (same room clock: item + startedAt
++ offset, late joiners land mid-track, holder election + watchdogs).
+- Providers now: youtube, youtube-playlist, soundcloud (+set/short),
+  direct-audio (direct media URLs), phone-file, bandcamp, drive.
+- GOOGLE DRIVE: share links (/file/d/<id>, ?id=) queue as 'drive'; playback
+  is a plain media element on the public stream URL; private/unservable
+  files error → 15s load watchdog → skip with a room note.
+- BANDCAMP: track/album pages resolve at queue time to Bandcamp's OWN
+  mp3 streams (worker /bandcamp: page → data-tralbum; albums expand into
+  a grouped set) and play through the direct player = fully synced.
+  The official embed is never used (it can't be driven by the room clock
+  — per the A1 rule it would not be queueable). Bandcamp bot-walls
+  datacenter IPs, so the worker chains fetch paths: direct → Google
+  Translate proxy → Jina reader (HTML mode); successes are edge-cached
+  30 min; worker accepts an optional JINA_API_KEY secret. If no path can
+  read the page, the add is refused plainly ("can't sync ⇒ can't queue").
+- SKIP-NEVER-WEDGE: playback errors announce on the new net action
+  jukeSaid (server channel): "⏭ couldn't play "X" — skipping" from the
+  phone holding advance duty, then the holder advances (build-104 path).
+- SPOTIFY SWAP (A1+A2+A3F, final spec implemented in swapMatch & friends):
+  spotify links (incl. spotify: URIs and spotify.link shorts) NEVER queue.
+  Identify keylessly via worker /spotify (embed page JSON: title, artists,
+  duration; oEmbed from the browser as a degraded fallback), search
+  YouTube keylessly (worker /ytsearch; Invidious instances as fallback),
+  judge candidates on AUDIO IDENTITY: exact version-qualifier set
+  (remix credit / sped up / slowed / reverb / nightcore / 8d / live /
+  acoustic / cover / mashup / extended / radio edit / demo / remaster —
+  remaster ignored on video uploads), title core, artist credit (an
+  uncredited upload can pass ONLY when title+version+duration all match
+  exactly), duration ±2.5s against the LINKED version. Official/Topic
+  channel = confidence boost only. Winner → swap card to the paster
+  ("found '…' on YouTube [queue that instead] [try a different link]");
+  queueing broadcasts "🔁 X's spotify pick swapped to youtube…"; the item
+  carries its audit trail ("🔁 from spotify — why this version?" on the
+  queue row). No winner → friendly card + one-tap YouTube search link for
+  the exact track. Post-load verification: when the swapped track starts,
+  the adder re-reads the loaded title/channel (noembed) and re-judges;
+  mismatch → room note + skip + re-prompt.
+- VERIFICATION (limbo-test/holoverse-queue*.mjs): provider detection 5/5;
+  matcher units 7/7 (plain→official wins, 2022-remaster refused, sped-up
+  refused for a plain link; remix link→that remix only; sped-up link→the
+  sped-up edit, original refused; cover link→that cover by that artist;
+  karaoke never matches); live swap of a real Spotify link offered the
+  official Rick Astley video, queued it, and it survived post-load
+  verification; bandcamp item queued + played the real bcbits stream
+  (client proven with a real captured resolve — the sandbox's shared
+  egress IPs are rate-limited by every public fetcher, so the worker
+  chain's live proof is the earlier end-to-end success + per-path
+  verification from a clean IP); fake drive file + dead mp3 both became
+  now-playing, failed, and skipped themselves. 0 unexpected page errors.
+
+## What's left / known limits
+- Two-phone multiplayer proof (avatar transfer + queue sync live-fire)
+  needs Joshua's phones — the VM blocks UDP, so data channels can't be
+  exercised here; all P2P code mirrors limboverse production paths.
+- Bandcamp resolve depends on public fetch paths that rate-limit shared
+  IPs; the edge cache + optional JINA_API_KEY secret are the pressure
+  valves. If it ever matters, a free jina.ai key in the worker secret
+  makes it boring.
+- Spotify album/playlist links get the "paste a track link" card (the
+  swap is per-track by design).
+- Plain .glb (non-VRM) avatar imports are rejected with a status line;
+  SMASHVR's autorig path could be ported if wanted.
 
 ## Phase 3 amendments (user decisions, 2026-10-24 — apply when Phase 3 starts)
 - A1 NO SPOTIFY (queue rule): a source is only queueable if it can deliver

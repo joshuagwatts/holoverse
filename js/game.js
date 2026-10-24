@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=2';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=2';
-import { CouchNet } from './couch.js?v=2';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=2';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=2';
-import * as Avatar from './avatar.js?v=2';
+import { AudioEngine } from './audio.js?v=3';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=3';
+import { CouchNet } from './couch.js?v=3';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=3';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=3';
+import * as Avatar from './avatar.js?v=3';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -4403,6 +4403,25 @@ function jukeDetectProvider(raw) {
     if (parts.length >= 2) return { provider: 'soundcloud' };
     return { provider: 'external' }; // profile page, likes, stream…
   }
+  // HOLOVERSE build 3: the universal queue.
+  // Spotify is detected so the add flow can run the swap (it never becomes
+  // a queue provider — it can't sync for everyone).
+  if (host === 'open.spotify.com' || host === 'spotify.link') {
+    if (/\/track\//.test(u.pathname)) return { provider: 'spotify' };
+    return { provider: 'spotify-other' };
+  }
+  // Bandcamp track/album pages resolve to their own streams at queue time.
+  if ((host === 'bandcamp.com' || host.endsWith('.bandcamp.com')) &&
+      (u.pathname.startsWith('/track/') || u.pathname.startsWith('/album/'))) {
+    return { provider: 'bandcamp' };
+  }
+  // Google Drive share links: file id in /file/d/<id>/ or ?id=.
+  if (host === 'drive.google.com' || host === 'drive.usercontent.google.com') {
+    const fm = u.pathname.match(/\/file\/d\/([A-Za-z0-9_-]{10,64})/);
+    const fid = fm ? fm[1] : (u.searchParams.get('id') || '');
+    if (/^[A-Za-z0-9_-]{10,64}$/.test(fid)) return { provider: 'drive', driveId: fid };
+    return { provider: 'external' };
+  }
   // Build 25: direct audio links ride the game's own WebAudio chain —
   // extension sniff here; extensionless audio URLs get a content-type
   // sniff at queue time (jukeSniffAudioContentType).
@@ -4419,6 +4438,8 @@ function jukeFallbackTitle(provider) {
   return provider === 'youtube' || provider === 'youtube-playlist' ? 'a youtube track'
     : provider === 'soundcloud' || provider === 'soundcloud-set' || provider === 'soundcloud-short' ? 'a soundcloud track'
     : provider === 'direct-audio' ? 'an audio file'
+    : provider === 'bandcamp' ? 'a bandcamp track'
+    : provider === 'drive' ? 'a drive track'
     : 'a track';
 }
 
@@ -4601,7 +4622,7 @@ function jukeResolveYTPlaylist(playlistId) {
   });
 }
 
-const JUKE_PROVIDERS = ['youtube', 'youtube-playlist', 'soundcloud', 'soundcloud-set', 'soundcloud-short', 'direct-audio', 'external', 'phone-file'];
+const JUKE_PROVIDERS = ['youtube', 'youtube-playlist', 'soundcloud', 'soundcloud-set', 'soundcloud-short', 'direct-audio', 'external', 'phone-file', 'bandcamp', 'drive'];
 function jukeValidAdd(d) {
   if (!d || typeof d !== 'object') return false;
   if (typeof d.id !== 'string' || !d.id || d.id.length > 40) return false;
@@ -4611,6 +4632,9 @@ function jukeValidAdd(d) {
     if (typeof d.fileId !== 'string' || !d.fileId || d.fileId.length > 40) return false;
     if (typeof d.fileName !== 'string' || !d.fileName || d.fileName.length > 120) return false;
   } else if (typeof d.url !== 'string' || !d.url || d.url.length > 500) return false;
+  // HOLOVERSE build 3: the synced-stream providers carry what playback needs.
+  if (d.provider === 'drive' && (typeof d.driveId !== 'string' || !/^[A-Za-z0-9_-]{10,64}$/.test(d.driveId))) return false;
+  if (d.provider === 'bandcamp' && (typeof d.streamUrl !== 'string' || !d.streamUrl || d.streamUrl.length > 1200)) return false;
   if (typeof d.title !== 'string' || !d.title || d.title.length > 140) return false;
   if (typeof d.addedBy !== 'string' || !d.addedBy || d.addedBy.length > 16) return false;
   if (typeof d.addedAt !== 'number') return false;
@@ -4625,6 +4649,8 @@ function jukeValidPlay(d) {
   if (d.provider === 'phone-file') {
     if (typeof d.fileId !== 'string' || !d.fileId) return false;
   } else if (typeof d.url !== 'string' || !d.url) return false;
+  if (d.provider === 'drive' && (typeof d.driveId !== 'string' || !d.driveId)) return false;
+  if (d.provider === 'bandcamp' && (typeof d.streamUrl !== 'string' || !d.streamUrl)) return false;
   if (typeof d.title !== 'string') return false;
   if (typeof d.startedAt !== 'number' || typeof d.by !== 'string') return false;
   if (typeof d.addedBy !== 'string') return false;
@@ -4643,7 +4669,12 @@ function jukeMakeId() {
    afterwards and pops in. Mobile short links are resolved to their canonical
    URL first; set/playlist URLs expand into one item per track.
    titleHint skips the network fetch (tests). */
-async function jukeAddTrack(rawUrl, titleHint) {
+async function jukeAddTrack(rawUrl, titleHint, extra) {
+  // HOLOVERSE build 3: a spotify: URI paste never carries an https URL.
+  if (/^spotify:track:/i.test(String(rawUrl || '').trim())) {
+    jukeSpotifySwapStart(String(rawUrl).trim());
+    return null;
+  }
   // Build 45: share text carries promo words around the link
   // ("Listen to X by Y on #SoundCloud https://on.soundcloud.com/abc") —
   // fish out the first https URL and queue that.
@@ -4656,6 +4687,15 @@ async function jukeAddTrack(rawUrl, titleHint) {
   }
   let url = cleanUrl; // build 45: extracted from pasted share text
   let resolvedTitle = titleHint || null;
+  // HOLOVERSE build 3: Spotify never queues — it swaps (see the swap
+  // engine below). Bandcamp resolves to its own stream before queueing.
+  if (det.provider === 'spotify' || det.provider === 'spotify-other') {
+    jukeSpotifySwapStart(url);
+    return null;
+  }
+  if (det.provider === 'bandcamp') {
+    return jukeAddBandcamp(url);
+  }
   // Short share links (on.soundcloud.com, snd.sc, soundcloud.app.goo.gl):
   // resolve to the canonical track/set URL via oEmbed (also yields the real
   // title). If it won't resolve here, the track keeps the short URL and gets
@@ -4692,6 +4732,8 @@ async function jukeAddTrack(rawUrl, titleHint) {
     videoId: det.videoId || null, title: resolvedTitle || jukeFallbackTitle(det.provider),
     addedBy: myName, addedAt: Date.now(),
   };
+  if (det.driveId) t.driveId = det.driveId; // HOLOVERSE build 3 (drive)
+  if (extra && typeof extra === 'object') Object.assign(t, extra); // build 3 (swap provenance)
   if (juke.queue.length >= JUKE_MAX_QUEUE) {
     jukeHint('the line is full at ' + JUKE_MAX_QUEUE + ' — let a track drift off first');
     return null;
@@ -4759,6 +4801,518 @@ async function jukeAddPlaylist(url, det, titleHint) {
   if (items.length) jukeHint(`queued ${items.length} track${items.length === 1 ? '' : 's'} — enjoy the set`);
   if (!juke.now) jukeAdvance();
   return items;
+}
+
+/* ================= HOLOVERSE build 3: the universal queue =================
+   One queue, every source, one room clock. A source is queueable ONLY if
+   it can deliver full, synced playback to everyone in the room:
+   youtube / soundcloud (embed APIs), bandcamp (its own stream, resolved
+   below), google drive public files, direct media, phone files. Spotify
+   is NOT queueable — it swaps (see the swap engine further down). */
+
+/* Keyless resolver proxy (Cloudflare Worker, ~/workspace/holoverse-worker):
+   /spotify identify, /ytsearch, /bandcamp stream resolution. */
+const RESOLVE_API = 'https://holoverse-resolve.joshuagwatts.workers.dev';
+async function jukeResolver(path, timeoutMs) {
+  try {
+    const ctl = new AbortController();
+    const to = setTimeout(() => ctl.abort(), timeoutMs || 15000);
+    const r = await fetch(RESOLVE_API + path, { signal: ctl.signal });
+    clearTimeout(to);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { return null; }
+}
+
+/* A jukebox announcement the whole server sees (swaps, skips, refusals). */
+function jukeRoomNote(text) {
+  addSystemLine(text);
+  if (net.enabled && net.sendJukeSaid) {
+    try { net.sendJukeSaid({ text: String(text).slice(0, 160), by: myName }); } catch (e) {}
+  }
+}
+
+/* Bandcamp: resolve the page to its own mp3 streams, then queue them as
+   first-class synced items (an album becomes a grouped set, like a
+   playlist). The official embed can't be driven by the room clock, so it
+   is never used; if no stream can be read, the link is refused plainly
+   rather than queued broken. */
+async function jukeAddBandcamp(url) {
+  jukeHint('fetching that bandcamp track…');
+  const res = await jukeResolver('/bandcamp?url=' + encodeURIComponent(url), 95000);
+  if (!res || res.error || !Array.isArray(res.tracks) || !res.tracks.length) {
+    jukeHint('couldn’t pull a playable stream from that bandcamp page — if it can’t sync for everyone, it can’t queue');
+    jukeRoomNote(`🚫 ${myName}'s bandcamp link couldn't be read — not queued`);
+    return null;
+  }
+  const now = Date.now();
+  const album = res.tracks.length > 1;
+  const gid = album ? 'bc-' + jukeMakeId() : null;
+  const items = [];
+  for (let i = 0; i < res.tracks.length; i++) {
+    const tr = res.tracks[i];
+    const t = {
+      id: jukeMakeId(), url, provider: 'bandcamp', videoId: null,
+      streamUrl: tr.streamUrl,
+      title: (album ? tr.title : (res.artist ? `${res.artist} — ${tr.title}` : tr.title)).slice(0, 140),
+      durationMs: tr.durationSec ? Math.round(tr.durationSec * 1000) : null,
+      addedBy: myName, addedAt: now + i,
+    };
+    if (album) {
+      t.group = gid;
+      t.groupTitle = ((res.artist ? res.artist + ' — ' : '') + (res.title || 'bandcamp album')).slice(0, 120);
+      t.groupCount = res.tracks.length;
+    }
+    if (!jukeValidAdd(t)) continue;
+    if (juke.queue.length >= JUKE_MAX_QUEUE) {
+      jukeHint('the line is full at ' + JUKE_MAX_QUEUE + ' — queuing what fits');
+      break;
+    }
+    items.push(t);
+    juke.queue.push(t);
+    jukeSortQueue();
+    jukeSendAdd(t);
+  }
+  renderJuke();
+  if (items.length) jukeHint(album ? `queued the album — ${items.length} tracks` : 'queued — enjoy');
+  if (!juke.now && items.length) jukeAdvance();
+  return items;
+}
+
+/* Bandcamp playback IS the direct player, aimed at the resolved stream. */
+function jukePlayBandcamp(d, offset) {
+  jukePlayDirect({ ...d, url: d.streamUrl }, offset);
+}
+
+/* Google Drive playback: a plain media element on the public stream URL.
+   No CORS games — the element just plays; if Drive won't serve the bytes
+   (private file, scan interstitial), the error path skips with a note. */
+function jukePlayDrive(d, offset) {
+  const el = new Audio();
+  el.preload = 'auto';
+  el.src = 'https://drive.google.com/uc?export=download&id=' + encodeURIComponent(d.driveId);
+  const st = { dead: false };
+  const failMsg = 'couldn’t play that drive file — is it shared so anyone with the link can listen?';
+  const fail = () => {
+    if (st.dead || !juke.now || juke.now.id !== d.id) return;
+    juke.playerErrored = true;
+    jukeOnTrackError(failMsg);
+  };
+  const arm = setTimeout(() => { if (el.readyState < 2) fail(); }, 15000);
+  el.addEventListener('error', fail);
+  el.addEventListener('ended', () => { if (juke.now && juke.now.id === d.id) jukeOnPlayerEnded(); });
+  el.addEventListener('loadedmetadata', () => {
+    try {
+      if (offset > 1 && Number.isFinite(el.duration)) {
+        el.currentTime = Math.min(offset, Math.max(0, el.duration - 1));
+      }
+    } catch (e) {}
+  });
+  el.addEventListener('canplay', () => clearTimeout(arm));
+  juke.player = {
+    kind: 'drive',
+    play: () => {
+      try {
+        const pr = el.play();
+        if (pr && pr.catch) pr.catch((e) => { if (soundPillBlockedErr(e)) soundPillShow(); });
+      } catch (e) {}
+    },
+    pause: () => { try { el.pause(); } catch (e) {} },
+    seekTo: (s) => { try { el.currentTime = Math.max(0, s); } catch (e) {} },
+    pos: () => { try { return el.currentTime || 0; } catch (e) { return null; } },
+    dur: () => { try { const dd = el.duration; return Number.isFinite(dd) ? dd : null; } catch (e) { return null; } },
+    setVolume: (v) => { try { el.volume = Math.max(0, Math.min(1, v / 100)); } catch (e) {} },
+    destroy: () => {
+      st.dead = true;
+      clearTimeout(arm);
+      try { el.pause(); el.removeAttribute('src'); el.load(); } catch (e) {}
+    },
+  };
+  try { el.volume = juke.volume; } catch (e) {}
+  juke.player.play();
+}
+
+/* ---------- the spotify swap (HOLOVERSE build 3) ----------
+   Spotify can't sync for everyone (full track only for signed-in Premium
+   listeners, previews for the rest), so a Spotify link never queues.
+   Instead: identify the track keylessly, find the SAME AUDIO on YouTube,
+   and offer the paster a one-tap swap.
+   THE RULE (final, supersedes every earlier draft): version fidelity to
+   the LINKED track. Whatever the link actually is — original, a specific
+   remix, a cover, a sped-up edit, a live cut — the match must be THAT
+   version. Version qualifiers are identity, uploader identity is only a
+   confidence boost. Nothing is refused for its KIND; uncertain = refuse. */
+
+function swapNorm(s) {
+  return String(s || '').toLowerCase().normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+
+/* Version-qualifier tokens of a title — must match EXACTLY between the
+   linked track and a candidate. */
+function swapQualifiersOf(title) {
+  const s = ' ' + swapNorm(title) + ' ';
+  const q = new Set();
+  const rm = s.match(/ ([a-z0-9]+) (remix|rework|flip|bootleg) /);
+  if (rm) q.add('remix:' + rm[1]);
+  else if (/ (remix|rework|flip|bootleg) /.test(s)) q.add('remix:?');
+  if (/ sped up | spedup /.test(s)) q.add('spedup');
+  if (/ slowed /.test(s)) q.add('slowed');
+  if (/ reverb /.test(s)) q.add('reverb');
+  if (/ nightcore /.test(s)) q.add('nightcore');
+  if (/ 8d /.test(s)) q.add('8d');
+  if (/ live /.test(s)) q.add('live');
+  if (/ acoustic /.test(s)) q.add('acoustic');
+  if (/ unplugged /.test(s)) q.add('unplugged');
+  if (/ instrumental /.test(s)) q.add('instrumental');
+  if (/ karaoke /.test(s)) q.add('karaoke');
+  if (/ cover /.test(s)) q.add('cover');
+  if (/ mashup /.test(s)) q.add('mashup');
+  if (/ extended /.test(s)) q.add('extended');
+  if (/ radio edit /.test(s)) q.add('radioedit');
+  if (/ demo /.test(s)) q.add('demo');
+  // "remaster" states an audio version — unless it's riding on a video
+  // upload ("Official Video (4K Remaster)"), where it's about the picture.
+  if (/ remaster(ed)? /.test(s) && !/ video /.test(s)) q.add('remaster');
+  return q;
+}
+
+const SWAP_STRIP_WORDS = new Set(('official video audio music lyric lyrics hd 4k 8k mv visualizer visualiser ' +
+  'remix rework flip bootleg sped up spedup slowed reverb nightcore 8d live acoustic unplugged instrumental karaoke ' +
+  'cover mashup extended radio edit demo remaster remastered version ver full song track hq').split(' '));
+function swapCoreTitle(title) {
+  return swapNorm(title).split(' ').filter((w) => w && !SWAP_STRIP_WORDS.has(w)).join(' ');
+}
+
+function swapArtistHit(track, candTitle, candChannel) {
+  const hay = swapNorm(candTitle) + ' | ' + swapNorm(candChannel);
+  return (track.artists || []).some((a) => {
+    const ac = swapNorm(a);
+    return ac.length >= 2 && hay.includes(ac);
+  });
+}
+
+function swapOfficialBoost(track, candChannel) {
+  const cn = swapNorm(candChannel);
+  return (track.artists || []).some((a) => {
+    const ac = swapNorm(a);
+    return ac && (cn === ac || cn === ac + ' topic');
+  });
+}
+
+function swapTitleHit(track, candTitle, candChannel) {
+  const core = swapCoreTitle(track.title);
+  if (!core) return false;
+  const cc = swapCoreTitle(candTitle);
+  if (cc === core || cc.includes(core) || core.includes(cc)) return true;
+  // "Artist - Title" uploads: strip a leading credited-artist segment.
+  for (const a of track.artists || []) {
+    const ac = swapCoreTitle(a);
+    if (ac && cc.startsWith(ac + ' ')) {
+      const rest = cc.slice(ac.length + 1);
+      if (rest === core || rest.includes(core) || core.includes(rest)) return true;
+    }
+  }
+  return false;
+}
+
+function swapSetEq(a, b) {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
+/* Judge one candidate against the linked track. Returns the audited
+   verdict; `lines` is the human-readable trail. */
+function swapJudge(track, cand) {
+  const lines = [];
+  let pass = true;
+  let score = 0;
+  const lq = swapQualifiersOf(track.title);
+  const cq = swapQualifiersOf(cand.title);
+  const qEq = swapSetEq(lq, cq);
+  lines.push(`version [${[...lq].join(' ') || 'plain'}] vs [${[...cq].join(' ') || 'plain'}] ${qEq ? 'ok' : 'MISMATCH'}`);
+  if (!qEq) pass = false;
+  const tHit = swapTitleHit(track, cand.title, cand.channel);
+  lines.push(`title ${tHit ? 'ok' : 'MISMATCH'}`);
+  if (!tHit) pass = false;
+  const boost = swapOfficialBoost(track, cand.channel);
+  // Duration is judged before the artist signal: it can carry an
+  // uncredited upload (below).
+  let dOk = null;
+  if (track.durationMs && cand.durationSec != null) {
+    const diff = Math.abs(cand.durationSec - track.durationMs / 1000);
+    dOk = diff <= 2.5;
+    lines.push(`duration ${cand.durationSec}s vs ${(track.durationMs / 1000).toFixed(1)}s (off by ${diff.toFixed(1)}s) ${dOk ? 'ok' : 'MISMATCH'}`);
+    if (!dOk) pass = false;
+  } else if (cand.durationSec == null) {
+    lines.push('duration unknown on the candidate \u2014 cannot verify, refusing');
+    pass = false;
+  } else {
+    lines.push('link duration unknown \u2014 the bar rises: needs the artist\u2019s own channel');
+    if (!boost) pass = false;
+  }
+  // Artist: credited in the title/channel is the clean pass. Per the final
+  // ruling the criterion is the AUDIO, not the uploader \u2014 so an
+  // uncredited upload still passes when title core, version qualifiers
+  // AND duration all match exactly (that combination is the recording's
+  // fingerprint). It ranks below a credited upload of the same audio.
+  const aHit = swapArtistHit(track, cand.title, cand.channel);
+  if (aHit) {
+    lines.push('artist ok');
+  } else if (qEq && tHit && swapCoreTitle(cand.title) === swapCoreTitle(track.title) && dOk === true) {
+    lines.push('artist not credited \u2014 carried by exact title + version + duration');
+    score -= 0.5;
+  } else {
+    lines.push('artist MISMATCH');
+    pass = false;
+  }
+  if (boost) { score += 2; lines.push('artist\u2019s own channel / topic: confidence +'); }
+  return { pass, score, lines };
+}
+
+/* The matcher: judge every candidate, keep the audit, pick the best pass. */
+function swapMatch(track, candidates) {
+  const audit = [];
+  let winner = null;
+  (candidates || []).forEach((cand, i) => {
+    const v = swapJudge(track, cand);
+    audit.push({ videoId: cand.videoId, title: cand.title, channel: cand.channel, pass: v.pass, lines: v.lines });
+    if (v.pass) {
+      const score = v.score - i * 0.01; // ties go to the earlier result
+      if (!winner || score > winner.score) winner = { ...cand, score };
+    }
+  });
+  return { winner, audit };
+}
+
+function swapAuditText(track, audit) {
+  const out = [`linked: "${track.title}" by ${(track.artists || []).join(', ') || '?'}${track.durationMs ? ` (${(track.durationMs / 1000).toFixed(1)}s)` : ''}`];
+  for (const a of audit.slice(0, 6)) {
+    out.push(`${a.pass ? '✓' : '✗'} ${a.title} — ${a.channel}`);
+    for (const l of a.lines) out.push('   ' + l);
+  }
+  if (!audit.length) out.push('no youtube candidates came back at all');
+  return out.map((l) => l.slice(0, 150));
+}
+
+async function swapIdentifySpotify(url) {
+  // One retry: a transient upstream error must not cost us the artist +
+  // duration (without them the matcher rightly refuses almost everything).
+  let w = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    w = await jukeResolver('/spotify?url=' + encodeURIComponent(url), 20000);
+    if (w && !w.error && w.title) {
+      return { title: String(w.title), artists: w.artists || [], durationMs: w.durationMs || null, kind: 'track' };
+    }
+    if (w && w.error === 'not-a-track') return { kind: w.kind || 'link' };
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 1200));
+  }
+  // Degraded fallback: spotify's own oEmbed from the browser — title only,
+  // so the matcher holds a higher bar (no duration, artist unknown).
+  try {
+    const r = await fetch('https://open.spotify.com/oembed?url=' + encodeURIComponent(url));
+    if (r.ok) {
+      const j = await r.json();
+      if (j && j.title) return { title: String(j.title), artists: [], durationMs: null, kind: 'track', degraded: true };
+    }
+  } catch (e) {}
+  return null;
+}
+
+async function swapSearchYT(q) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const w = await jukeResolver('/ytsearch?q=' + encodeURIComponent(q), 20000);
+    if (w && Array.isArray(w.candidates) && w.candidates.length) return w.candidates;
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 1200));
+  }
+  // Fallback: public Invidious instances (CORS-open search API).
+  for (const host of ['https://inv.nadeko.net', 'https://invidious.privacyredirect.com']) {
+    try {
+      const ctl = new AbortController();
+      const to = setTimeout(() => ctl.abort(), 8000);
+      const r = await fetch(host + '/api/v1/search?type=video&q=' + encodeURIComponent(q), { signal: ctl.signal });
+      clearTimeout(to);
+      if (!r.ok) continue;
+      const arr = await r.json();
+      const cands = (arr || []).filter((v) => v && v.videoId).slice(0, 8).map((v) => ({
+        videoId: v.videoId, title: v.title || '', channel: v.author || '',
+        durationSec: typeof v.lengthSeconds === 'number' ? v.lengthSeconds : null,
+      }));
+      if (cands.length) return cands;
+    } catch (e) {}
+  }
+  return [];
+}
+
+/* ---- the swap card (paster-local; the room hears about the outcome) ---- */
+const swapCardEl = document.getElementById('juke-swap');
+let swapSeq = 0;
+let swapState = null; // { track, winner, audit, query }
+let swapVerifyPending = null; // { itemId, track }
+const swapAuditOpen = new Set(); // queue item ids with the audit trail expanded
+
+function swapHideCard() {
+  if (!swapCardEl) return;
+  swapCardEl.style.display = 'none';
+  swapCardEl.innerHTML = '';
+}
+
+function swapRenderCard(build) {
+  if (!swapCardEl) return;
+  swapCardEl.innerHTML = '';
+  swapCardEl.style.display = '';
+  build(swapCardEl);
+}
+
+function swapEl(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function swapAuditDetails(parent, track, audit) {
+  const det = swapEl('div', 'swap-audit', swapAuditText(track, audit).join('\n'));
+  det.style.display = 'none';
+  const btn = swapEl('button', 'ghost', 'why this version?');
+  btn.addEventListener('click', () => {
+    det.style.display = det.style.display === 'none' ? '' : 'none';
+    btn.textContent = det.style.display === 'none' ? 'why this version?' : 'hide the audit';
+  });
+  const row = swapEl('div', 'swap-row');
+  row.appendChild(btn);
+  parent.appendChild(row);
+  parent.appendChild(det);
+}
+
+async function jukeSpotifySwapStart(url) {
+  const seq = ++swapSeq;
+  swapState = null;
+  swapRenderCard((card) => {
+    card.appendChild(swapEl('div', 'swap-title', 'spotify can’t sync for everyone — finding the same audio on youtube…'));
+  });
+  const track = await swapIdentifySpotify(url);
+  if (seq !== swapSeq) return;
+  if (!track) {
+    swapRenderCard((card) => {
+      card.appendChild(swapEl('div', 'swap-title', 'couldn’t read that spotify link'));
+      card.appendChild(swapEl('div', null, `${myName}, that link wouldn't identify — try a different link, or paste the youtube version straight in.`));
+      const row = swapEl('div', 'swap-row');
+      const b = swapEl('button', 'ghost', 'ok');
+      b.addEventListener('click', swapHideCard);
+      row.appendChild(b);
+      card.appendChild(row);
+    });
+    return;
+  }
+  if (track.kind !== 'track') {
+    swapRenderCard((card) => {
+      card.appendChild(swapEl('div', 'swap-title', `that’s a spotify ${track.kind}, not a track`));
+      card.appendChild(swapEl('div', null, 'the queue swaps single tracks so the version can be matched exactly — paste a track link and it’ll find the same audio on youtube.'));
+      const row = swapEl('div', 'swap-row');
+      const b = swapEl('button', 'ghost', 'ok');
+      b.addEventListener('click', swapHideCard);
+      row.appendChild(b);
+      card.appendChild(row);
+    });
+    return;
+  }
+  const query = ((track.artists[0] || '') + ' ' + track.title).trim();
+  const cands = await swapSearchYT(query);
+  if (seq !== swapSeq) return;
+  const { winner, audit } = swapMatch(track, cands);
+  swapState = { track, winner, audit, query };
+  if (winner) {
+    swapRenderCard((card) => {
+      card.appendChild(swapEl('div', 'swap-title', 'spotify can’t sync for everyone — found the same audio on youtube'));
+      card.appendChild(swapEl('div', null, `“${winner.title}” — ${winner.channel}`));
+      const row = swapEl('div', 'swap-row');
+      const go = swapEl('button', null, 'queue that instead');
+      go.addEventListener('click', () => swapQueueWinner());
+      const no = swapEl('button', 'ghost', 'try a different link');
+      no.addEventListener('click', swapHideCard);
+      row.appendChild(go);
+      row.appendChild(no);
+      card.appendChild(row);
+      swapAuditDetails(card, track, audit);
+    });
+  } else {
+    swapRenderCard((card) => {
+      card.appendChild(swapEl('div', 'swap-title', `no confident match for “${track.title}”`));
+      card.appendChild(swapEl('div', null, `${myName}, I won't guess the room's audio — if it's the wrong version, that's worse than asking. Search youtube for this exact track and paste the real one:`));
+      const row = swapEl('div', 'swap-row');
+      const a = swapEl('a', null, '🔎 search youtube for it');
+      a.href = 'https://www.youtube.com/results?search_query=' + encodeURIComponent(query);
+      a.target = '_blank';
+      a.rel = 'noopener';
+      const no = swapEl('button', 'ghost', 'try a different link');
+      no.addEventListener('click', swapHideCard);
+      row.appendChild(a);
+      row.appendChild(no);
+      card.appendChild(row);
+      swapAuditDetails(card, track, audit);
+    });
+  }
+}
+
+async function swapQueueWinner() {
+  const st = swapState;
+  if (!st || !st.winner) return;
+  swapSeq++; // the card's job is done; stale renders can't resurrect it
+  const ytUrl = 'https://www.youtube.com/watch?v=' + st.winner.videoId;
+  const t = await jukeAddTrack(ytUrl, st.winner.title, {
+    swap: {
+      from: 'spotify',
+      origTitle: st.track.title,
+      origArtists: st.track.artists,
+      videoId: st.winner.videoId,
+      audit: swapAuditText(st.track, st.audit),
+    },
+  });
+  swapHideCard();
+  if (t) {
+    jukeRoomNote(`🔁 ${myName}’s spotify pick swapped to youtube so everyone hears it`);
+    swapVerifyPending = { itemId: t.id, track: st.track };
+  }
+}
+
+/* Post-load verification: once the swapped track actually starts, read
+   back what youtube says loaded and re-judge it. Wrong audio gets
+   skipped with a room note — it never just plays through. */
+async function swapFetchRealTitle(url) {
+  try {
+    const ctl = new AbortController();
+    const to = setTimeout(() => ctl.abort(), 5000);
+    const r = await fetch('https://noembed.com/embed?url=' + encodeURIComponent(url), { signal: ctl.signal });
+    clearTimeout(to);
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (j && j.title) return { title: String(j.title), author: String(j.author_name || '') };
+  } catch (e) {}
+  return null;
+}
+
+function swapMaybeVerify(d) {
+  const p = swapVerifyPending;
+  if (!p || !d || d.id !== p.itemId || d.addedBy !== myName) return;
+  swapVerifyPending = null;
+  setTimeout(async () => {
+    if (!juke.now || juke.now.id !== p.itemId) return;
+    const real = await swapFetchRealTitle(d.url);
+    if (!real) return; // couldn't read back — a network hiccup punishes no one
+    const ok = swapTitleHit(p.track, real.title, real.author) &&
+      swapArtistHit(p.track, real.title, real.author) &&
+      swapSetEq(swapQualifiersOf(p.track.title), swapQualifiersOf(real.title));
+    if (!ok) {
+      jukeRoomNote(`⚠️ the swapped track didn't check out as “${p.track.title}” — skipping it`);
+      jukeHint('that swap loaded as something else — skipped it; try another link');
+      if (juke.now && juke.now.id === p.itemId) jukeSkipNow();
+    }
+  }, 4000);
 }
 
 /* Pull a whole playlist group back out of the queue (remaining tracks). */
@@ -5114,12 +5668,16 @@ function jukeAdvance() {
     id: next.id, url: next.url, provider: next.provider,
     videoId: next.videoId, title: next.title,
     addedBy: next.addedBy, startedAt: Date.now(),
-    durationMs: 0, by: myName,
+    durationMs: next.durationMs || 0, by: myName,
   };
   if (next.provider === 'phone-file') {
     play.fileId = next.fileId;
     play.fileName = next.fileName;
   }
+  // HOLOVERSE build 3: stream/drive payloads + swap provenance ride along.
+  if (next.provider === 'bandcamp') play.streamUrl = next.streamUrl;
+  if (next.provider === 'drive') play.driveId = next.driveId;
+  if (next.swap) play.swap = next.swap;
   // Playlist grouping survives the queue -> now-playing hop (and the broadcast).
   if (next.group) {
     play.group = next.group;
@@ -5178,8 +5736,11 @@ function jukeStartPlayback(d) {
   if (d.provider === 'youtube') jukePlayYT(d, offset);
   else if (d.provider === 'soundcloud') jukePlaySC(d, offset);
   else if (d.provider === 'direct-audio') jukePlayDirect(d, offset);
+  else if (d.provider === 'bandcamp') jukePlayBandcamp(d, offset);
+  else if (d.provider === 'drive') jukePlayDrive(d, offset);
   else if (d.provider === 'phone-file') jukePlayPhoneFile(d, offset);
   else jukePlayExternal(d);
+  swapMaybeVerify(d); // HOLOVERSE build 3: post-load check on swapped tracks
   jukeArmEndWatcher();
   jukeArmResync();
   jukeArmProgress();
@@ -5512,6 +6073,11 @@ function jukeOnTrackError(msg) {
   if (jukeErrAdvancedFor === juke.now.id) return; // already handling it
   jukeErrAdvancedFor = juke.now.id;
   jukeHint(msg || 'couldn\u2019t load that link — is it public?');
+  // HOLOVERSE build 3: when this phone holds the advance duty, the skip is
+  // room news - announce it on the server channel, not just a local hint.
+  if (jukeIAmHolder || juke.now.addedBy === myName) {
+    jukeRoomNote('\u23ed couldn\u2019t play \u201c' + String(juke.now.title || 'that track').slice(0, 60) + '\u201d \u2014 skipping');
+  }
   // Build 104: the HOLDER advances on a broken track, not just the adder.
   // (The old addedBy === myName check stranded everyone else on a dead track
   // when someone else's link failed to load.)
@@ -6190,6 +6756,8 @@ function jukeProviderIcon(p) {
     : p === 'soundcloud' ? '☁ sc'
     : p === 'soundcloud-set' || p === 'soundcloud-short' ? '☁ set'
     : p === 'direct-audio' ? '⚡ direct'
+    : p === 'bandcamp' ? '◉ bc'
+    : p === 'drive' ? '▣ drive'
     : p === 'phone-file' ? '📱 phone'
     : '↗ ext';
 }
@@ -6209,6 +6777,7 @@ function renderJuke() {
     if (byEl) byEl.textContent = juke.now.provider === 'phone-file'
       ? `\u{1F4F1} from ${(juke.now.addedBy || juke.now.by || 'a drifter')}'s phone`
       : `queued by ${juke.now.addedBy || juke.now.by || 'a drifter'}`;
+    if (byEl && juke.now.swap) byEl.textContent += ' \u00b7 \u{1F501} swapped from spotify';
     if (skipBtn) skipBtn.disabled = false;
     if (openApp) {
       openApp.disabled = false;
@@ -6263,6 +6832,23 @@ function renderJuke() {
         : `${jukeProviderIcon(t.provider)} · ${t.addedBy}`;
         row.appendChild(nm);
         row.appendChild(meta);
+        // HOLOVERSE build 3: swapped items carry their audit trail.
+        if (t.swap) {
+          const why = document.createElement('button');
+          why.className = 'juke-why';
+          why.textContent = '🔁 from spotify — why this version?';
+          const det = document.createElement('div');
+          det.className = 'juke-audit-line';
+          det.textContent = (t.swap.audit || []).join('\n');
+          det.style.display = swapAuditOpen.has(t.id) ? '' : 'none';
+          why.addEventListener('click', () => {
+            const show = det.style.display === 'none';
+            det.style.display = show ? '' : 'none';
+            if (show) swapAuditOpen.add(t.id); else swapAuditOpen.delete(t.id);
+          });
+          row.appendChild(why);
+          row.appendChild(det);
+        }
         if (t.addedBy === myName) {
           const rm = document.createElement('button');
           rm.className = 'juke-rm';
@@ -13888,6 +14474,9 @@ net.onWallFreshCb = handleWallFresh; // build 84: peer archived + cleared a wall
 net.onJukeAddCb = handleJukeAdd;
 net.onJukeRemoveCb = handleJukeRemove;
 net.onJukePlayCb = handleJukePlay;
+net.onJukeSaidCb = (peerId, d) => { // HOLOVERSE build 3: room announcements
+  if (d && typeof d.text === 'string' && d.text) addSystemLine(d.text.slice(0, 160));
+};
 net.onJukeSkipVoteCb = handleJukeSkip; // wire name is legacy; semantics are instant-skip
 net.onJukeStateReqCb = handleJukeStateReq;
 net.onJukeStateCb = handleJukeState;
@@ -14446,6 +15035,21 @@ window.__limbo = {
   avatarPeerState: () => [...peerVisuals.values()].map((pv) => ({ id: pv.id, hash: pv.avatarHash, hasVisual: !!pv.avatarVisual, orbVisible: pv.core.visible })),
   // HOLOVERSE build 2: zone hooks for smoke tests
   zoneState: () => ({ zone: jamZone ? jamZone.id : null, zones: (active && active.zones) ? active.zones.map((z) => z.id) : null, jamOpen: jam.open, jamInst: jam.instrument }),
+  // HOLOVERSE build 3: queue hooks for smoke tests
+  swapMatch: (track, candidates) => swapMatch(track, candidates),
+  swapCardState: () => ({ state: swapState ? (swapState.winner ? 'offer' : 'nomatch') : (swapCardEl && swapCardEl.style.display !== 'none' ? 'open' : 'closed'), winner: swapState && swapState.winner ? swapState.winner.videoId : null }),
+  spotifySwap: (url) => jukeSpotifySwapStart(url),
+  swapDebug: async (url) => {
+    const track = await swapIdentifySpotify(url);
+    if (!track || track.kind !== 'track') return { track };
+    const q = (((track.artists || [])[0] || '') + ' ' + track.title).trim();
+    const cands = await swapSearchYT(q);
+    const m = swapMatch(track, cands);
+    return { track, query: q, candCount: cands.length, cands: cands.slice(0, 3), winner: m.winner && m.winner.videoId, audit: m.audit };
+  },
+  jukeQueueState: () => ({ queue: juke.queue.map((t) => ({ provider: t.provider, title: t.title, swap: !!t.swap })), now: juke.now ? { provider: juke.now.provider, title: juke.now.title } : null }),
+  jukeDetect: (u) => jukeDetectProvider(u),
+  jukeAdd: (url) => jukeAddTrack(url),
   showChatBubble,
   PROXIMITY_R,
   build: net.build,

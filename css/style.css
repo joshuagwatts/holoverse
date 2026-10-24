@@ -2199,3 +2199,30 @@ html { -webkit-text-size-adjust: 100%; }
   color: #ffe9bd; font-size: 14px; letter-spacing: 0.12em;
   user-select: none; -webkit-user-select: none; white-space: nowrap;
 }
+
+/* ================= HOLOVERSE build 3: spotify swap card =============== */
+.juke-swap {
+  margin: 8px 0 2px; padding: 10px 12px; border-radius: 10px;
+  background: rgba(29, 185, 84, 0.08); border: 1px solid rgba(29, 185, 84, 0.45);
+  color: #d8f5e0; font-size: 12.5px; line-height: 1.5;
+}
+.juke-swap .swap-title { font-weight: 600; color: #eafff0; }
+.juke-swap .swap-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.juke-swap button {
+  background: rgba(29, 185, 84, 0.18); color: #eafff0; border: 1px solid rgba(29, 185, 84, 0.6);
+  border-radius: 999px; padding: 6px 14px; font-size: 12px; cursor: pointer;
+}
+.juke-swap button.ghost { background: transparent; border-color: rgba(216, 245, 224, 0.3); color: #b9d6c2; }
+.juke-swap a { color: #7fe6a8; }
+.juke-swap .swap-audit {
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(216, 245, 224, 0.15);
+  font-size: 11px; color: #a9c8b2; white-space: pre-wrap; word-break: break-word;
+}
+.juke-audit-line {
+  flex-basis: 100%; font-size: 11px; color: #a9c8b2; white-space: pre-wrap;
+  word-break: break-word; padding: 2px 0 6px;
+}
+.juke-why {
+  background: none; border: none; color: #8fa8ff; cursor: pointer;
+  font-size: 11px; padding: 0 0 0 6px; text-decoration: underline;
+}

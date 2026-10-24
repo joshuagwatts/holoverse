@@ -176,6 +176,7 @@ const ACTION_CBS = {
   jukeAdd: 'onJukeAddCb',
   jukeRemove: 'onJukeRemoveCb',
   jukePlay: 'onJukePlayCb',
+  jukeNote: 'onJukeNoteCb',
   jukeSkipVote: 'onJukeSkipVoteCb',
   jukeStateReq: 'onJukeStateReqCb',
   jukeState: 'onJukeStateCb',
@@ -207,6 +208,7 @@ const ACTION_CBS = {
   voiceTalk: 'onVoiceTalkCb',
   avatarReq: 'onAvatarReqCb', // HOLOVERSE: "send me your VRM" (targeted)
   avatarChunk: 'onAvatarChunkCb', // HOLOVERSE: VRM file slices (targeted)
+  jukeSaid: 'onJukeSaidCb', // HOLOVERSE build 3: room-visible jukebox announcements (swaps, skips)
 };
 const BROADCAST_ACTIONS = Object.keys(ACTION_CBS).filter(
   (n) => n !== 'jukeFileReq' && n !== 'jukeFileChunk' && n !== 'avatarReq' && n !== 'avatarChunk'
@@ -225,7 +227,7 @@ const JUKE_SERVER_ACTIONS = new Set([
      authoritative holder — elected, not assumed. Hellos track who's on
      the server channel, claims announce the holder, syncs carry the
      canonical line, and anyone can ask for a clear. */
-  'jukeHello', 'jukeClaim', 'jukeSync', 'jukeClear',
+  'jukeHello', 'jukeClaim', 'jukeSync', 'jukeClear', 'jukeSaid',
   /* Build 75: the theatre rides the same server channel — one shared
      screen per server, audible from any room (including the jam). */
   'theatreAdd', 'theatrePlay', 'theatrePause', 'theatreStateReq',
@@ -610,7 +612,9 @@ export class LimboNet {
     this.onWallFreshCb = null; // (data, peerId) — build 84
     this.onJukeAddCb = null; // (data, peerId)
     this.onJukeRemoveCb = null; // (data, peerId)
-    this.onJukePlayCb = null; // (data, peerId)
+    this.onJukePlayCb = null;
+    this.onJukeSaidCb = null; // HOLOVERSE build 3: jukebox announcements
+    this.onJukeNoteCb = null; // (data, peerId)
     this.onJukeSkipVoteCb = null; // (data, peerId)
     this.onJukeFileReqCb = null; // (data, peerId)
     this.onJukeFileChunkCb = null; // (data, peerId)

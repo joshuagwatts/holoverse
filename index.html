@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#020204">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="css/style.css?v=2">
+<link rel="stylesheet" href="css/style.css?v=3">
 <script type="importmap">
 {
   "imports": {
@@ -26,8 +26,8 @@
 </script>
 <!-- build 34: vendored QR libs (classic scripts -> window.qrcode / window.jsQR).
      Local files, not a CDN — the couch co-op ceremony must work offline. -->
-<script src="js/vendor/qrcode.js?v=2"></script>
-<script src="js/vendor/jsqr.js?v=2"></script>
+<script src="js/vendor/qrcode.js?v=3"></script>
+<script src="js/vendor/jsqr.js?v=3"></script>
 <!-- HOLOVERSE build 1: no service worker yet — the page always loads
      fresh from Pages (document is no-cache, assets carry ?v= busts). -->
 </head>
@@ -84,9 +84,14 @@
   <div class="juke-sub">UP NEXT</div>
   <div id="juke-queue" class="juke-queue"><div class="juke-empty">queue is empty — drop a link</div></div>
   <div class="juke-add-row">
-    <input id="juke-add-url" placeholder="paste a youtube / soundcloud / mp3 link…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <input id="juke-add-url" placeholder="paste a youtube / soundcloud / bandcamp / drive / mp3 link…" autocomplete="off" autocapitalize="off" spellcheck="false">
     <button id="juke-add-btn">queue it</button>
   </div>
+  <!-- HOLOVERSE build 3: the Spotify swap card. Spotify can't sync for
+       everyone, so a pasted Spotify link is identified and matched to the
+       SAME audio on YouTube; this card offers the swap to whoever pasted
+       it (or explains, with the audit trail, why nothing was confident). -->
+  <div id="juke-swap" class="juke-swap" style="display:none"></div>
   <!-- build 27: play a song straight from the phone. The file travels to
        the room over the P2P data channel (no upload site, no link that can
        die) and everyone hears it in sync like any other jukebox track. -->
@@ -649,6 +654,6 @@
 <!-- minimal touch joystick UI -->
 <div id="joy-base"><div id="joy-knob"></div></div>
 
-<script type="module" src="js/game.js?v=2"></script>
+<script type="module" src="js/game.js?v=3"></script>
 </body>
 </html>
