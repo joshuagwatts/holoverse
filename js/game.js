@@ -9,13 +9,13 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=5';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=5';
-import { CouchNet } from './couch.js?v=5';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=5';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=5';
-import * as Avatar from './avatar.js?v=5';
-import { CueClient, cueCleanRoomCode, cueValidAdd as cueValidAddFn } from './cuelink.js?v=5';
+import { AudioEngine } from './audio.js?v=6';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=6';
+import { CouchNet } from './couch.js?v=6';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=6';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=6';
+import * as Avatar from './avatar.js?v=6';
+import { CueClient, cueCleanRoomCode, cueValidAdd as cueValidAddFn } from './cuelink.js?v=6';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -13276,9 +13276,16 @@ const endless = {
   whooshT: -1,   // <0 idle; 0..1 while the rescale pulse runs
   pending: 0,    // -1 descend / +1 ascend, applied at the pulse peak
   cooldown: 0,
-  inMini: false, inDoor: false, // zone latches: must leave before re-firing
+  armed: false,  // build 6: triggers fire ONLY while armed (see endlessTick)
+  outTime: 0,    // continuous seconds spent outside BOTH zones since the last swap
+  inMini: false, inDoor: false, // live zone occupancy (test hook / debug)
   hudText: null,
 };
+/* Build 6: the descend trigger hugs the geometry that means intent — the
+   miniature itself spans hd<=1.86 (its faces), y 1.72..3.43 (base..roof).
+   Build 4's bubble reached hd 2.6 / y up to 4.9, so overflights and
+   center transits fired swaps without ever entering the little room. */
+const EB_MINI_R = 2.05, EB_MINI_Y0 = 1.45, EB_MINI_Y1 = 3.75;
 const depthHudEl = document.getElementById('depth-hud');
 function endlessDepthText(d) { return d === 0 ? 'SURFACE' : (d < 0 ? '−' + (-d) : '+' + d); }
 
@@ -13317,6 +13324,7 @@ function endlessApplyTints() {
 function endlessOnEnter() {
   endless.depth = 0;
   endless.whooshT = -1; endless.pending = 0; endless.cooldown = 0;
+  endless.armed = false; endless.outTime = 0; // build 6: earn the triggers outside the zones
   endless.inMini = endless.inDoor = false;
   endlessApplyTints();
   endless.hudText = null; // force HUD refresh in tick
@@ -13344,11 +13352,15 @@ function endlessSwap(dir) {
   }
   clearTrail();
   lastTransition = clock.elapsedTime; // settle: no portal may fire on a swap arrival
-  // Latches are re-derived from the ARRIVAL spot, not left to tick order:
-  // arriving inside a zone means "already in it" (step out to re-fire);
-  // arriving outside clears the latch even if no tick saw you there.
-  endless.inMini = Math.hypot(p.x, p.z) < 2.6 && p.y > 1.25 && p.y < 4.9;
-  endless.inDoor = p.z < -12.25 && Math.abs(p.x) < 1.7 && p.y < 4.5;
+  // Build 6: a swap DISARMS both triggers, unconditionally. They re-arm
+  // only after a continuous beat fully outside both zones (endlessTick).
+  // Build 4 derived "latches" from the arrival position instead — but the
+  // scale map (entry x7, wall-clamped) lands nearly every arrival OUTSIDE
+  // the new zone, so the latch was born cleared and mere presence in the
+  // zone re-fired: transits, overflights, even standing still after
+  // arriving chained swaps ~1-2s apart on a real phone. Disarm-on-swap
+  // has no such hole: arriving inside a zone can never re-fire, period.
+  endless.armed = false; endless.outTime = 0;
   endlessApplyTints();
 }
 function endlessTick(dt, t) {
@@ -13372,13 +13384,21 @@ function endlessTick(dt, t) {
   }
   const p = wisp.position;
   const hd = Math.hypot(p.x, p.z);
-  const inMini = hd < 2.6 && p.y > 1.25 && p.y < 4.9;
+  const inMini = hd < EB_MINI_R && p.y > EB_MINI_Y0 && p.y < EB_MINI_Y1;
   const inDoor = p.z < -12.25 && Math.abs(p.x) < 1.7 && p.y < 4.5;
-  if (!inMini) endless.inMini = false;
-  if (!inDoor) endless.inDoor = false;
-  if (transitioning || endless.cooldown > 0) return;
-  if (inMini && !endless.inMini) { endless.inMini = true; endless.pending = -1; endless.whooshT = 0; }
-  else if (inDoor && !endless.inDoor) { endless.inDoor = true; endless.pending = 1; endless.whooshT = 0; }
+  endless.inMini = inMini; endless.inDoor = inDoor;
+  // Build 6 arm/disarm state machine: the triggers (re)arm only after
+  // the player has been fully outside BOTH zones for a continuous 0.5s.
+  // Any tick inside either zone zeroes the beat, so hovering on a zone
+  // boundary can never arm it, and a swap arrival inside a zone leaves
+  // the triggers dead until the player genuinely leaves and stays out.
+  if (!inMini && !inDoor) {
+    endless.outTime += dt;
+    if (endless.outTime >= 0.5) endless.armed = true;
+  } else endless.outTime = 0;
+  if (transitioning || endless.cooldown > 0 || !endless.armed) return;
+  if (inMini) { endless.pending = -1; endless.whooshT = 0; endless.armed = false; endless.outTime = 0; }
+  else if (inDoor) { endless.pending = 1; endless.whooshT = 0; endless.armed = false; endless.outTime = 0; }
 }
 
 function buildNexus(textures) {
@@ -15880,7 +15900,7 @@ window.__limbo = {
   // HOLOVERSE build 2: zone hooks for smoke tests
   zoneState: () => ({ zone: jamZone ? jamZone.id : null, zones: (active && active.zones) ? active.zones.map((z) => z.id) : null, jamOpen: jam.open, jamInst: jam.instrument }),
   // HOLOVERSE build 4: endless box hooks for smoke tests
-  endlessState: () => ({ inBox: !!(active && active.key === ENDLESS_ROOM_KEY), depth: endless.depth, whoosh: endless.whooshT >= 0, whooshT: endless.whooshT, pending: endless.pending, cooldown: endless.cooldown, inMini: endless.inMini, inDoor: endless.inDoor, transitioning, fov: camera.fov, hud: depthHudEl ? depthHudEl.textContent : null, hudShown: depthHudEl ? depthHudEl.style.display : null, parentScale: worlds[ENDLESS_DEF.key] ? worlds[ENDLESS_DEF.key].endlessCopies.parent.group.scale.x : null, miniScale: worlds[ENDLESS_DEF.key] ? worlds[ENDLESS_DEF.key].endlessCopies.current.child.group.scale.x : null, miniY: worlds[ENDLESS_DEF.key] ? worlds[ENDLESS_DEF.key].endlessCopies.current.child.group.position.y : null }),
+  endlessState: () => ({ inBox: !!(active && active.key === ENDLESS_ROOM_KEY), depth: endless.depth, whoosh: endless.whooshT >= 0, whooshT: endless.whooshT, pending: endless.pending, cooldown: endless.cooldown, armed: endless.armed, outTime: endless.outTime, inMini: endless.inMini, inDoor: endless.inDoor, transitioning, fov: camera.fov, hud: depthHudEl ? depthHudEl.textContent : null, hudShown: depthHudEl ? depthHudEl.style.display : null, parentScale: worlds[ENDLESS_DEF.key] ? worlds[ENDLESS_DEF.key].endlessCopies.parent.group.scale.x : null, miniScale: worlds[ENDLESS_DEF.key] ? worlds[ENDLESS_DEF.key].endlessCopies.current.child.group.scale.x : null, miniY: worlds[ENDLESS_DEF.key] ? worlds[ENDLESS_DEF.key].endlessCopies.current.child.group.position.y : null }),
   nexusPortals: () => (worlds.nexus ? worlds.nexus.portals.map((p) => p.target) : []),
   // HOLOVERSE build 5a: cue link hooks for the two-app relay prove-out
   cueState: () => (cueClient ? {

@@ -397,5 +397,63 @@ YouTube-only queue. Now the screen is a VIEW of the jukebox session
   (a YouTube track) — in-world swap flow only applies to links pasted
   in-world, same as each app standalone.
 
+## Build 6 — SHIPPED (2026-10-25): ENDLESS BOX swap-loop fix
+User report from his phone: "Its lowkey freakin out in that room" —
+"Def some kinda loop issue." He was right.
+
+ROOT CAUSE (reproduced headless, limbo-test/holoverse-endless-loop.mjs,
+which FLIES with held keys — the build-4 suite only teleported with
+zero velocity, so it could never see this): build 4's anti-repeat
+protection was two "latches" re-derived from the ARRIVAL position
+inside endlessSwap. But the scale map (entry x7, wall-clamped) lands
+nearly every arrival OUTSIDE the new chamber's trigger zone, so the
+latch was born cleared — the machine had no memory a swap had just
+happened, and mere presence in the zone re-fired. Compounding it, the
+descend zone was an invisible bubble (hd<2.6, y 1.25..4.9) extending
+~0.75u past the miniature's walls and ~1.5u ABOVE its roof (mini spans
+hd<=1.86, y 1.72..3.43). Measured on the old code: holding forward from
+spawn = descend -> descend (transit re-fire) -> ascend (arrival slam
+at z=-11.6 coasted into the door alcove) in one held input; overflying
+the miniature at y=4.3 = 2 descents without touching it; standing
+perfectly still inside the zone after arriving = another descent.
+Cycle time was just whoosh 0.32s + cooldown 0.35s, so on a 60fps phone
+the depth counter spins and the FOV strobes — the freak-out. Ruled out
+with evidence: handler/tick accumulation (one trigger after 3 room
+re-entries fired exactly once) and whoosh non-termination (idle FOV
+steady at 70).
+
+FIX (js/game.js, endless sections only — 58-line diff vs build 5):
+- Explicit arm/disarm state machine replaces the position latches.
+  A swap (and room entry, and the trigger itself) DISARMS both
+  triggers; they re-arm only after the player has been fully OUTSIDE
+  both zones for a continuous 0.5s (endless.outTime; any tick inside
+  either zone zeroes the beat, so boundary-hovering can't arm either).
+  Standing still after arrival can never re-fire, period — wherever
+  the arrival lands.
+- Descend zone tightened to the miniature's true volume: hd<2.05,
+  y 1.45..3.75 (was hd<2.6, y 1.25..4.9). Flying OVER the little room
+  or past its walls no longer counts as entering it. Door alcove
+  unchanged. Whoosh, facing preservation (dot=1.000 re-verified),
+  depth HUD, tint drift, peer depth markers all unchanged.
+- endlessState() test hook gained `armed` + `outTime`.
+
+VERIFICATION: holoverse-endless-loop ALL PASS (hold-W: exactly 1
+deliberate descent, 0 swaps after release; overfly: 0 swaps, was 2;
+stand-still-in-zone: 0 extra swaps, was 1; 3 re-entries + 1 trigger:
+exactly 1 swap; idle corner: 0 swaps, FOV steady 70; 0 page errors).
+holoverse-endless ENDLESS ALL PASS (its teleport rounds now stage on
+the `armed` flag — same assertions: arrivals, HUD, scales, peer
+gating). holoverse-smoke: boot stamp build 6, 0 page errors.
+holoverse-zones: all behaviors correct, 0 page errors.
+- holoverse-cuelink: 9 failures in the playback-mirroring phase —
+  PROVEN ENVIRONMENTAL, not a build-6 regression: a control run with
+  the pristine live build-5 game.js swapped in fails with the
+  IDENTICAL 9 (and a retry on the fixed tree likewise). Browser
+  consoles show ERR_CONNECTION_REFUSED on media loads while the relay
+  protocol (create/link/discover/holder agreement) passes on every
+  run; the cue app's own player never progresses ("null -> null") in
+  this sandbox today. Same egress flakiness class build 5 documented.
+  Re-run cuelink when sandbox egress cooperates.
+
 
 
