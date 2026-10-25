@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#020204">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="css/style.css?v=4">
+<link rel="stylesheet" href="css/style.css?v=5">
 <script type="importmap">
 {
   "imports": {
@@ -26,8 +26,8 @@
 </script>
 <!-- build 34: vendored QR libs (classic scripts -> window.qrcode / window.jsQR).
      Local files, not a CDN — the couch co-op ceremony must work offline. -->
-<script src="js/vendor/qrcode.js?v=4"></script>
-<script src="js/vendor/jsqr.js?v=4"></script>
+<script src="js/vendor/qrcode.js?v=5"></script>
+<script src="js/vendor/jsqr.js?v=5"></script>
 <!-- HOLOVERSE build 1: no service worker yet — the page always loads
      fresh from Pages (document is no-cache, assets carry ?v= busts). -->
 </head>
@@ -94,6 +94,13 @@
        SAME audio on YouTube; this card offers the swap to whoever pasted
        it (or explains, with the audit trail, why nothing was confident). -->
   <div id="juke-swap" class="juke-swap" style="display:none"></div>
+  <!-- HOLOVERSE build 5a: link this jukebox to a Cue Room (the standalone
+       app) by its room code — one shared line across both apps. -->
+  <div class="juke-cue-row">
+    <input id="juke-cue-code" placeholder="cue room code — link the standalone app" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="10">
+    <button id="juke-cue-link">link</button>
+  </div>
+  <div id="juke-cue-status" class="juke-cue-status" style="display:none"></div>
   <!-- build 27: play a song straight from the phone. The file travels to
        the room over the P2P data channel (no upload site, no link that can
        die) and everyone hears it in sync like any other jukebox track. -->
@@ -117,7 +124,7 @@
      (that's documented behavior) — so the projection layer must be a WRAPPER
      the API never touches. theatreScreenTick() transforms #theatre-screen3d;
      the player itself is constructed on #theatre-screen3d-slot inside it. -->
-<div id="theatre-screen3d" style="display:none"><div id="theatre-screen3d-slot"></div></div>
+<div id="theatre-screen3d" style="display:none"><div id="theatre-screen3d-slot"></div><!-- HOLOVERSE build 5b: the jukebox layer — when the jukebox is playing, the screen shows the JUKEBOX session: a muted video element for Drive video, a now-playing card for audio. YouTube goes through the slot's own player, driven by the same session. --><div id="theatre-juke-layer" style="display:none"><video id="theatre-juke-video" style="display:none" muted playsinline></video><div id="theatre-juke-card" style="display:none"><div class="tjc-note">&#127911; NOW PLAYING IN THE JUKEBOX</div><div class="tjc-title" id="theatre-juke-title"></div><div class="tjc-by" id="theatre-juke-by"></div><div class="tjc-bar"><div class="tjc-fill" id="theatre-juke-fill"></div></div><div class="tjc-time" id="theatre-juke-time"></div></div></div></div>
 <div id="theatre-panel" style="display:none">
   <div class="theatre-head"><span>&#127916; THEATRE</span><span id="theatre-by" class="theatre-by"></span><button id="theatre-close" aria-label="close">&#10005;</button></div>
   <div id="theatre-screen-note" class="theatre-screen-note">look up — the video plays on the big screen</div>
@@ -656,6 +663,6 @@
 <!-- minimal touch joystick UI -->
 <div id="joy-base"><div id="joy-knob"></div></div>
 
-<script type="module" src="js/game.js?v=4"></script>
+<script type="module" src="js/game.js?v=5"></script>
 </body>
 </html>

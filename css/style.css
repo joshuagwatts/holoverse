@@ -1561,6 +1561,21 @@ html, body {
   transform-origin: 0 0; z-index: 30; overflow: hidden; background: #000;
 }
 #theatre-screen3d-slot, #theatre-screen3d iframe { width: 100% !important; height: 100% !important; border: none; display: block; }
+/* HOLOVERSE build 5b: jukebox layer on the theatre screen */
+#theatre-juke-layer { position: absolute; inset: 0; background: #000; }
+#theatre-juke-video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+#theatre-juke-card {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 18px; text-align: center;
+  background: radial-gradient(ellipse at 50% 40%, #1b1030 0%, #05030a 70%);
+  color: #efeaff; padding: 40px;
+}
+.tjc-note { font-size: 20px; letter-spacing: 0.35em; opacity: 0.55; }
+.tjc-title { font-size: 52px; font-weight: 700; line-height: 1.15; max-width: 90%; }
+.tjc-by { font-size: 24px; opacity: 0.7; }
+.tjc-bar { width: 70%; height: 8px; border-radius: 99px; background: rgba(255, 255, 255, 0.14); overflow: hidden; }
+.tjc-fill { height: 100%; width: 0%; background: #b18cff; border-radius: 99px; }
+.tjc-time { font-size: 20px; opacity: 0.6; font-variant-numeric: tabular-nums; }
 /* Theatre (build 76): slim control strip — the video is on the big screen now. */
 #theatre-panel {
   position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
@@ -2223,6 +2238,20 @@ html { -webkit-text-size-adjust: 100%; }
   border-radius: 999px; padding: 6px 14px; font-size: 12px; cursor: pointer;
 }
 .juke-swap button.ghost { background: transparent; border-color: rgba(216, 245, 224, 0.3); color: #b9d6c2; }
+
+/* ================= HOLOVERSE build 5a: cue room link ================= */
+.juke-cue-row { display: flex; gap: 8px; margin: 10px 0 2px; }
+.juke-cue-row input {
+  flex: 1; min-width: 0; background: rgba(255, 255, 255, 0.06); color: #e8ecf8;
+  border: 1px solid rgba(177, 140, 255, 0.4); border-radius: 999px; padding: 7px 14px;
+  font-size: 12.5px; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.juke-cue-row input::placeholder { text-transform: none; letter-spacing: 0; opacity: 0.55; }
+.juke-cue-row button {
+  background: rgba(177, 140, 255, 0.16); color: #e6dcff; border: 1px solid rgba(177, 140, 255, 0.6);
+  border-radius: 999px; padding: 7px 16px; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.juke-cue-status { font-size: 11.5px; color: #c9b8ff; opacity: 0.9; margin: 2px 0 4px; letter-spacing: 0.02em; }
 .juke-swap a { color: #7fe6a8; }
 .juke-swap .swap-audit {
   margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(216, 245, 224, 0.15);

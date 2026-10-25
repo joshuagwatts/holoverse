@@ -9,12 +9,13 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=4';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=4';
-import { CouchNet } from './couch.js?v=4';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=4';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=4';
-import * as Avatar from './avatar.js?v=4';
+import { AudioEngine } from './audio.js?v=5';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=5';
+import { CouchNet } from './couch.js?v=5';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=5';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=5';
+import * as Avatar from './avatar.js?v=5';
+import { CueClient, cueCleanRoomCode, cueValidAdd as cueValidAddFn } from './cuelink.js?v=5';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -363,6 +364,20 @@ function jukeTrackPending(t) {
 }
 /* One send path for user-queued tracks: broadcast + watch for the holder's ack. */
 function jukeSendAdd(t) {
+  // HOLOVERSE build 5a: while linked, adds go to the CUE ROOM (converted
+  // to its track shape) — the session mirror brings them back into the
+  // panel. Phone files and external links can't ride the link (the cue
+  // protocol has no P2P files, and external can't sync for everyone).
+  if (cueLinked()) {
+    if (t.provider === 'phone-file' || t.provider === 'external') {
+      jukeHint('that kind of track can\'t ride a cue room link — it wouldn\'t sync for everyone');
+      return;
+    }
+    const ct = cueFromJukeItem(t);
+    if (cueValidAddFn(ct)) cueClient.localAdd(ct);
+    else jukeHint('that track can\'t ride a cue room link');
+    return;
+  }
   try {
     if (net && net.enabled && net.sendJukeAdd) net.sendJukeAdd(t);
   } catch (e) { /* best effort — the ack timer retries */ }
@@ -562,6 +577,7 @@ function jukeRestore() {
 }
 function jukeBroadcastSync() {
   try {
+    if (cueLinked()) return; // build 5a: never publish cue state onto the local channel
     if (!net || !net.sendJukeSync) return;
     jukeSyncRev++;
     net.sendJukeSync({
@@ -607,6 +623,11 @@ function renderJukeHolder() {
   try {
     if (!jukeHolderEl) jukeHolderEl = document.getElementById('juke-holder');
     if (!jukeHolderEl) return;
+    // HOLOVERSE build 5a: while linked, the label reports the CUE holder.
+    if (cueLinked()) {
+      jukeHolderEl.textContent = '· 🔗 cue ' + cueClient.room + (cueClient.iAmHolder ? ' · you hold the line' : ' · held by ' + (cueClient.holderName || '…'));
+      return;
+    }
     jukeHolderEl.textContent =
       jukeIAmHolder ? '· holding the line'
       : jukeHolderName ? '· line held by ' + jukeHolderName
@@ -624,6 +645,7 @@ function handleJukeClaim(peerId, d) {
 /* Canonical snapshot from the holder. A sync doubles as a claim — the
    sender is alive and asserting the line. */
 function handleJukeSync(peerId, d) {
+  if (cueLinked()) return; // build 5a: the cue session is the state source while linked
   if (!jukeSrvOk(d) || !d || typeof d.rev !== 'number') return;
   const cid = String(peerId || '');
   if (!cid) return;
@@ -689,8 +711,12 @@ function handleJukeSync(peerId, d) {
    locally at once, and the holder rebroadcasts the empty canonical
    state so every phone converges on empty. */
 function jukeClearQueue() {
+  // HOLOVERSE build 5a: the cue protocol has no clear — the line belongs
+  // to the room. Unlink to manage a local line again.
+  if (cueLinked()) { jukeHint('this line belongs to the cue room — unlink to clear a local line'); return; }
   jukeStopPlayback();
   juke.now = null;
+  try { theatreSyncToJuke(); } catch (e) {} // build 5b
   juke.queue = [];
   jukeLastKnown = null; // build 53: an explicit clear really is empty
   jukeLastClearAt = Date.now();
@@ -4769,6 +4795,13 @@ async function jukeEnrichTitle(t) {
   if (title === jukeFallbackTitle(t.provider)) return;
   t.title = title;
   if (juke.now && juke.now.id === t.id) juke.now.title = title;
+  // HOLOVERSE build 5a: share the real title with the cue room too.
+  if (cueLinked()) {
+    const ct = cueClient.queue.find((x) => x.id === t.id) || (cueClient.now && cueClient.now.id === t.id ? cueClient.now : null);
+    if (ct) { ct.title = title; cueClient.localTitle(ct); }
+    cueMirror();
+    return;
+  }
   renderJuke();
 }
 
@@ -5410,6 +5443,9 @@ function handleJukeRemove(peerId, d) {
    receiver call jukeAdvance(); competing jukePlay broadcasts resolve via
    the existing earliest-startedAt contention rule. */
 function jukeSkipNow() {
+  // HOLOVERSE build 5a: in a linked cue room a skip is a VOTE (2 voters
+  // confirm, per cue rules) — not the local instant skip.
+  if (cueLinked()) { cueClient.voteSkip(); return; }
   if (!juke.now || juke.now.stopped) return;
   const id = juke.now.id;
   if (net.enabled && net.sendJukeSkipVote) {
@@ -5419,6 +5455,7 @@ function jukeSkipNow() {
 }
 
 function handleJukeSkip(peerId, d) {
+  if (cueLinked()) return; // build 5a: local instant-skips don't touch a linked session
   if (!jukeSrvOk(d)) return;
   if (!d || typeof d.id !== 'string') return;
   if (!juke.now || juke.now.id !== d.id) return; // stale skip — already moved on
@@ -5467,6 +5504,12 @@ function jukeB64decode(b64) {
    track plays. */
 async function jukeAddPhoneFile(file) {
   if (!file) return null;
+  // HOLOVERSE build 5a: phone files travel peer-to-peer — a linked cue
+  // room has no channel for them. Refuse plainly, keep the file local.
+  if (cueLinked()) {
+    jukeHint('phone files can\'t ride a cue room link — unlink to play from your phone');
+    return null;
+  }
   const size = file.size || 0;
   if (size > JUKE_PHONE_MAX) {
     jukeHint('that file is over 50MB \u2014 trim it down and try again');
@@ -5664,6 +5707,11 @@ function handleJukeFileHave(peerId, d) {
    the broadcaster (queuer of the finished track, skipper, watchdog,
    DJ-leave resumer). */
 function jukeAdvance() {
+  // HOLOVERSE build 5a: while linked, advancement is the cue session's
+  // call — route every local advance intent (end watcher, watchdog,
+  // idle-room add) through the cue rules: the holder advances, everyone
+  // else reports the end. Never wedges, never double-advances.
+  if (cueLinked()) { cueClient.onPlayerEnded(); return null; }
   const next = juke.queue.shift() || null;
   if (!next) {
     const msg = { stopped: true, by: myName, startedAt: Date.now() };
@@ -5675,6 +5723,7 @@ function jukeAdvance() {
     juke.nowStartedAt = 0;
     juke.lastPlaySeenAt = Date.now();
     renderJuke();
+    try { theatreSyncToJuke(); } catch (e) {} // build 5b: jukebox idle — screen released
     return null;
   }
   const play = {
@@ -5705,6 +5754,7 @@ function jukeAdvance() {
 }
 
 function handleJukePlay(peerId, d) {
+  if (cueLinked()) return; // build 5a: cue session rules while linked
   if (!jukeSrvOk(d)) return;
   if (!jukeValidPlay(d)) return;
   if (d.stopped) {
@@ -5713,6 +5763,7 @@ function handleJukePlay(peerId, d) {
     juke.nowStartedAt = 0;
     juke.lastPlaySeenAt = Math.max(juke.lastPlaySeenAt, d.startedAt || Date.now());
     renderJuke();
+    try { theatreSyncToJuke(); } catch (e) {} // build 5b
     if (jukeIAmHolder) jukeBroadcastSync();
     return;
   }
@@ -5733,10 +5784,171 @@ function jukeAdoptPlay(d) {
   const i = juke.queue.findIndex((t) => t.id === d.id);
   if (i !== -1) juke.queue.splice(i, 1);
   jukeStartPlayback(d);
+  try { theatreSyncToJuke(); } catch (e) {} // build 5b: the screen follows the session
+}
+
+/* ================= HOLOVERSE build 5a: CUE ROOM LINK =================
+   The jukebox can LINK to a Cue Room (the standalone app) by its 6-char
+   code. While linked, the cue session is the jukebox's source of truth:
+   the CueClient (js/cuelink.js — a faithful port of the cue protocol)
+   owns queue/now/holder over the relay network, and its events drive
+   THIS jukebox's players and panel through the mirror below. Adds made
+   in-world funnel through jukeSendAdd and convert to cue tracks; a
+   skip tap becomes a cue skip-vote; player end/error events report
+   into the cue rules. The local (Trystero) juke session is gated off,
+   not destroyed — unlinking restores the exact local line that was
+   playing when the link was made. */
+let cueClient = null;
+let cueSavedLocal = null; // {queue, now} — the local line, parked while linked
+let cueCid = null;
+try { cueCid = localStorage.getItem('holoverse-cue-cid'); } catch (e) { /* private mode */ }
+if (!cueCid) {
+  cueCid = 'c' + Date.now().toString(36) + Math.floor(Math.random() * 1e9).toString(36);
+  try { localStorage.setItem('holoverse-cue-cid', cueCid); } catch (e) { /* ignore */ }
+}
+function cueLinked() { return !!cueClient; }
+const cueStatusEl = document.getElementById('juke-cue-status');
+const cueLinkBtn = document.getElementById('juke-cue-link');
+const cueCodeInput = document.getElementById('juke-cue-code');
+
+function cueToJukeItem(t) {
+  return {
+    id: t.id, url: t.url, provider: t.provider,
+    videoId: t.videoId || null,
+    title: String(t.title || 'a track').slice(0, 140),
+    addedBy: String(t.addedBy || 'guest').slice(0, 16),
+    addedById: t.addedById || null,
+    addedAt: t.addedAt || Date.now(),
+    driveId: t.driveId || undefined,
+    streamUrl: t.streamUrl || undefined,
+    durationMs: t.durationMs || null,
+    swap: t.swap || undefined,
+  };
+}
+function cueToJukePlay(p) {
+  const it = cueToJukeItem(p);
+  it.startedAt = p.startedAt;
+  it.by = p.by;
+  if (p.durationMs) it.durationMs = p.durationMs;
+  return it;
+}
+function cueFromJukeItem(t) {
+  const c = {
+    id: t.id, url: t.url, provider: t.provider,
+    videoId: t.videoId || null,
+    title: String(t.title || '').slice(0, 160),
+    addedBy: String(t.addedBy || myName).slice(0, 24),
+    addedById: cueCid,
+    addedAt: t.addedAt || Date.now(),
+  };
+  if (t.driveId) c.driveId = t.driveId;
+  if (t.streamUrl) c.streamUrl = String(t.streamUrl).slice(0, 1400);
+  if (t.durationMs) c.durationMs = t.durationMs;
+  if (t.swap) c.swap = t.swap;
+  return c;
+}
+/* The cue session changed: re-derive the panel's queue from it. (Now-
+ * playing flows separately through onPlay/onStop — the same events the
+ * cue app itself plays by.) */
+function cueMirror() {
+  if (!cueClient) return;
+  juke.queue = cueClient.queue.map(cueToJukeItem);
+  renderJuke();
+  cueRenderLink();
+}
+function cueFeedLine(text) {
+  try { addSystemLine('🎧 ' + text); } catch (e) { /* chat not ready */ }
+}
+function cueRenderLink() {
+  if (!cueStatusEl) return;
+  if (!cueClient) {
+    cueStatusEl.style.display = 'none';
+    if (cueLinkBtn) cueLinkBtn.textContent = 'link';
+    return;
+  }
+  cueStatusEl.style.display = '';
+  const holder = cueClient.iAmHolder ? 'you hold the line' : 'held by ' + (cueClient.holderName || '…');
+  cueStatusEl.textContent = `🔗 cue room ${cueClient.room} · ${cueClient.sockets} relay${cueClient.sockets === 1 ? '' : 's'} live · ${holder} · ${cueClient.roster.size + 1} listening`;
+  if (cueLinkBtn) cueLinkBtn.textContent = 'unlink';
+}
+async function cueLinkStart(code) {
+  const clean = cueCleanRoomCode(code);
+  if (!clean) { jukeHint('that cue room code doesn\'t look right — 6 letters/digits from the app'); return false; }
+  if (cueClient) cueLinkStop(true);
+  cueSavedLocal = { queue: juke.queue.slice(), now: juke.now ? { ...juke.now } : null };
+  const client = new CueClient({
+    name: myName, cid: cueCid,
+    hooks: {
+      onPlay: (play) => {
+        jukeAdoptPlay(cueToJukePlay(play));
+        try { theatreSyncToJuke(); } catch (e) { /* theatre lands in 5b */ }
+      },
+      onStop: () => {
+        jukeStopPlayback();
+        juke.now = null; juke.nowStartedAt = 0;
+        renderJuke();
+        try { theatreSyncToJuke(); } catch (e) { /* 5b */ }
+      },
+      onQueue: () => cueMirror(),
+      onFeed: (text) => cueFeedLine(text),
+      onConn: () => cueRenderLink(),
+      playerPos: () => { try { return juke.player && juke.player.pos ? juke.player.pos() : null; } catch (e) { return null; } },
+      playerDur: () => { try { return juke.player && juke.player.dur ? juke.player.dur() : null; } catch (e) { return null; } },
+      selfHeal: () => { if (juke.now) jukeStartPlayback(juke.now); },
+    },
+  });
+  cueClient = client;
+  // Park the local line: silence it and clear the panel; the room fills both.
+  jukeStopPlayback();
+  juke.now = null; juke.nowStartedAt = 0;
+  juke.queue = [];
+  renderJuke();
+  cueRenderLink();
+  const ok = await client.start(clean);
+  if (!ok) cueFeedLine('cue link: the relay library couldn\'t load — the link will retry as relays connect');
+  cueFeedLine('linked to cue room ' + clean + ' — one line, both apps');
+  try { localStorage.setItem('holoverse-cue-room', clean); } catch (e) { /* ignore */ }
+  return true;
+}
+function cueLinkStop(silent) {
+  if (!cueClient) return;
+  try { cueClient.close(); } catch (e) { /* already gone */ }
+  cueClient = null;
+  if (cueSavedLocal) {
+    juke.queue = cueSavedLocal.queue;
+    const n = cueSavedLocal.now;
+    cueSavedLocal = null;
+    if (n) jukeAdoptPlay(n); // startedAt math lands it mid-track, as if never left
+    else { jukeStopPlayback(); juke.now = null; juke.nowStartedAt = 0; renderJuke(); }
+  } else {
+    jukeStopPlayback(); juke.now = null; juke.nowStartedAt = 0; juke.queue = []; renderJuke();
+  }
+  try { theatreSyncToJuke(); } catch (e) { /* 5b */ }
+  if (!silent) cueFeedLine('cue room unlinked — back to the local line');
+  cueRenderLink();
+}
+if (cueLinkBtn) {
+  cueLinkBtn.addEventListener('click', () => {
+    if (cueLinked()) cueLinkStop(false);
+    else cueLinkStart(cueCodeInput ? cueCodeInput.value : '');
+    cueLinkBtn.blur();
+  });
+}
+if (cueCodeInput) {
+  try { cueCodeInput.value = localStorage.getItem('holoverse-cue-room') || ''; } catch (e) { /* ignore */ }
+  cueCodeInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !cueLinked()) cueLinkStart(cueCodeInput.value);
+  });
 }
 
 /* offset math, shared by the real players and the tests */
 function jukeOffsetFor(d, nowMs) {
+  // HOLOVERSE build 5a: a linked cue track's startedAt lives in its
+  // ORIGIN device's clock — the cue client's skew-corrected clock is
+  // the only honest ruler for it.
+  if (nowMs == null && cueClient && cueClient.now && d && d.id === cueClient.now.id) {
+    return cueClient.offsetFor(cueClient.now);
+  }
   return Math.max(0, ((nowMs == null ? Date.now() : nowMs) - d.startedAt) / 1000);
 }
 
@@ -6083,6 +6295,10 @@ function jukePlayYTFresh(d, offset) {
 let jukeErrAdvancedFor = null;
 function jukeOnTrackError(msg) {
   if (!juke.now) return;
+  // HOLOVERSE build 5a: while linked, errors follow cue-room rules —
+  // report + corroborate + self-heal (see CueClient.onPlayerError);
+  // one device's broken player never skips the room.
+  if (cueLinked()) { cueClient.onPlayerError(msg); return; }
   if (jukeErrAdvancedFor === juke.now.id) return; // already handling it
   jukeErrAdvancedFor = juke.now.id;
   jukeHint(msg || 'couldn\u2019t load that link — is it public?');
@@ -7083,15 +7299,216 @@ function theatreCycleScreenSize() {
   theatreApplyScreenSize();
 }
 
+/* ================= HOLOVERSE build 5b: THEATRE FOLLOWS THE JUKEBOX ====
+   The big screen is a VIEW of the jukebox session (local or a linked
+   Cue Room — both land in juke.now, so both show here). While the
+   jukebox has a now-playing, it owns the screen:
+     - YouTube items: the theatre's own YT player loads the same video,
+       MUTED (the jukebox is the room's audio), positioned from the
+       jukebox room clock — walking in mid-song lands at the right
+       moment, and the tick re-seeks if drift passes 2s.
+     - Drive items: a muted <video> in the juke layer, streamed through
+       the resolve worker (Drive's own host blocks cross-origin media),
+       same room-clock positioning; if the file turns out audio-only,
+       the screen falls back to the card.
+     - Everything else (SoundCloud, Bandcamp, direct, phone files):
+       a now-playing CARD — title, who queued it, progress vs the
+       room clock.
+   The theatre's own session is parked untouched and restored when the
+   jukebox idles; remote theatre state is ignored while juke-driven
+   (every client derives the screen from the shared juke session, so
+   the room stays in sync without theatre messages). */
+theatre.jukeMode = false;
+theatre.jukeKind = null; // 'yt' | 'video' | 'card'
+theatre.jukeId = null;
+theatre.jukeSaved = null;
+theatre.jukeSyncAt = 0;
+const theatreJukeLayerEl = document.getElementById('theatre-juke-layer');
+const theatreJukeVideoEl = document.getElementById('theatre-juke-video');
+const theatreJukeCardEl = document.getElementById('theatre-juke-card');
+const theatreJukeTitleEl = document.getElementById('theatre-juke-title');
+const theatreJukeByEl = document.getElementById('theatre-juke-by');
+const theatreJukeFillEl = document.getElementById('theatre-juke-fill');
+const theatreJukeTimeEl = document.getElementById('theatre-juke-time');
+const THEATRE_JUKE_DRIVE_API = 'https://holoverse-resolve.joshuagwatts.workers.dev';
+
+function theatreJukeKind(now) {
+  if (!now) return null;
+  if ((now.provider === 'youtube' || now.provider === 'youtube-playlist') && now.videoId) return 'yt';
+  if (now.provider === 'drive' && now.driveId) return 'video';
+  return 'card';
+}
+function theatreJukeFmt(s) {
+  s = Math.max(0, Math.floor(s || 0));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+function theatreSyncToJuke() {
+  const now = (typeof juke !== 'undefined' && juke.now && !juke.now.stopped) ? juke.now : null;
+  if (!now) { if (theatre.jukeMode) theatreJukeRelease(); return; }
+  const kind = theatreJukeKind(now);
+  if (!theatre.jukeMode) {
+    theatre.jukeSaved = {
+      videoId: theatre.videoId, title: theatre.title, addedBy: theatre.addedBy,
+      playing: theatre.playing, position: theatre.position, startedAt: theatre.startedAt,
+    };
+    theatre.jukeMode = true;
+    try { if (theatre.player && theatre.playerReady && theatre.player.mute) theatre.player.mute(); } catch (e) {}
+  }
+  const sameItem = theatre.jukeId === now.id && theatre.jukeKind === kind;
+  theatre.jukeId = now.id;
+  theatre.jukeKind = kind;
+  theatre.jukeTitle = now.title;
+  if (kind === 'yt') {
+    theatreJukeShowLayer(false);
+    theatre.videoId = now.videoId;
+    theatre.title = now.title;
+    theatre.addedBy = now.addedBy;
+    theatre.position = jukeOffsetFor(now);
+    theatre.startedAt = Date.now();
+    theatre.playing = true;
+    if (active && active.key === THEATRE_ROOM_KEY) theatreEnsurePlayer();
+    theatreApplyState();
+  } else if (kind === 'video') {
+    try { if (theatre.player && theatre.playerReady) theatre.player.pauseVideo(); } catch (e) {}
+    theatreJukeShowVideo(now, sameItem);
+  } else {
+    try { if (theatre.player && theatre.playerReady) theatre.player.pauseVideo(); } catch (e) {}
+    theatreJukeShowCard(now);
+  }
+  try { theatreRender(); } catch (e) {}
+}
+function theatreJukeShowLayer(on) {
+  if (theatreJukeLayerEl) theatreJukeLayerEl.style.display = on ? '' : 'none';
+  if (!on) {
+    if (theatreJukeVideoEl) { try { theatreJukeVideoEl.pause(); } catch (e) {} theatreJukeVideoEl.style.display = 'none'; }
+    if (theatreJukeCardEl) theatreJukeCardEl.style.display = 'none';
+  }
+}
+function theatreJukeShowVideo(now, sameItem) {
+  theatreJukeShowLayer(true);
+  if (theatreJukeCardEl) theatreJukeCardEl.style.display = 'none';
+  const el = theatreJukeVideoEl;
+  if (!el) return;
+  el.style.display = '';
+  const want = THEATRE_JUKE_DRIVE_API + '/drive?id=' + encodeURIComponent(now.driveId);
+  if (!sameItem || el.dataset.jukeId !== now.id) {
+    el.dataset.jukeId = now.id;
+    el.dataset.fellBack = '';
+    el.src = want;
+    el.onloadedmetadata = () => {
+      if (!theatre.jukeMode || theatre.jukeId !== now.id) return;
+      if (!el.videoWidth) { // audio-only file — honest card instead of black
+        theatre.jukeKind = 'card';
+        theatreJukeShowCard(now);
+        return;
+      }
+      try {
+        const off = jukeOffsetFor(now);
+        if (Number.isFinite(el.duration) && off > 1) el.currentTime = Math.min(off, Math.max(0, el.duration - 1));
+        el.play().catch(() => {});
+      } catch (e) {}
+    };
+    el.onerror = () => {
+      if (!theatre.jukeMode || theatre.jukeId !== now.id) return;
+      if (!el.dataset.fellBack) { // worker stream failed — try Drive direct once
+        el.dataset.fellBack = '1';
+        el.src = 'https://drive.google.com/uc?export=download&id=' + encodeURIComponent(now.driveId);
+      } else { theatre.jukeKind = 'card'; theatreJukeShowCard(now); }
+    };
+  }
+  try { el.play().catch(() => {}); } catch (e) {}
+}
+function theatreJukeShowCard(now) {
+  theatreJukeShowLayer(true);
+  if (theatreJukeVideoEl) { try { theatreJukeVideoEl.pause(); } catch (e) {} theatreJukeVideoEl.style.display = 'none'; }
+  if (theatreJukeCardEl) theatreJukeCardEl.style.display = 'flex';
+  if (theatreJukeTitleEl) theatreJukeTitleEl.textContent = now.title || 'a track';
+  if (theatreJukeByEl) theatreJukeByEl.textContent = 'queued by ' + (now.addedBy || 'a drifter') + ' · ' + String(now.provider || '').replace(/-/g, ' ');
+  theatreJukeCardTick(now);
+}
+function theatreJukeCardTick(now) {
+  if (!theatreJukeFillEl) return;
+  const el = Math.max(0, jukeOffsetFor(now));
+  let dur = now.durationMs ? now.durationMs / 1000 : 0;
+  if (!dur && typeof juke !== 'undefined' && juke.player && juke.player.dur) { try { dur = juke.player.dur() || 0; } catch (e) {} }
+  theatreJukeFillEl.style.width = dur > 0 ? Math.min(100, (el / dur) * 100) + '%' : '0%';
+  if (theatreJukeTimeEl) theatreJukeTimeEl.textContent = theatreJukeFmt(el) + (dur > 0 ? ' / ' + theatreJukeFmt(dur) : '');
+}
+/* Per-frame (throttled) upkeep while the screen is juke-driven: keep
+ * the presentation honest against the room clock — one clean seek
+ * when drift passes 2s, never a chase. */
+function theatreJukeTick() {
+  if (!theatre.jukeMode) return;
+  const now = (typeof juke !== 'undefined' && juke.now && !juke.now.stopped) ? juke.now : null;
+  if (!now) { theatreJukeRelease(); return; }
+  if (now.id !== theatre.jukeId) { theatreSyncToJuke(); return; }
+  if (theatre.jukeKind === 'card') { theatreJukeCardTick(now); return; }
+  const t = Date.now();
+  if (t - theatre.jukeSyncAt < 2500) return;
+  theatre.jukeSyncAt = t;
+  const want = jukeOffsetFor(now);
+  if (theatre.jukeKind === 'yt') {
+    // The player build rides the jukebox's API loader, whose 12s
+    // fail-latch can strand a one-shot build on a slow network —
+    // keep asking until the player exists and is ready.
+    if (!theatre.player || !theatre.playerReady) {
+      theatreEnsurePlayer();
+      if (theatre.playerReady) theatreApplyState();
+      return;
+    }
+    try {
+      const target = theatre.position + (t - theatre.startedAt) / 1000;
+      if (Math.abs(target - want) > 2) {
+        theatre.position = want;
+        theatre.startedAt = t;
+        theatreApplyState();
+      }
+    } catch (e) {}
+  } else if (theatre.jukeKind === 'video' && theatreJukeVideoEl && theatreJukeVideoEl.style.display !== 'none') {
+    try {
+      const el = theatreJukeVideoEl;
+      if (el.readyState >= 2 && Math.abs(el.currentTime - want) > 2) {
+        el.currentTime = Math.min(want, Math.max(0, (el.duration || want) - 1));
+      }
+      if (el.paused) el.play().catch(() => {});
+    } catch (e) {}
+  }
+}
+function theatreJukeRelease() {
+  const saved = theatre.jukeSaved;
+  theatre.jukeMode = false;
+  theatre.jukeKind = null;
+  theatre.jukeId = null;
+  theatre.jukeSaved = null;
+  theatreJukeShowLayer(false);
+  if (theatreJukeVideoEl) { theatreJukeVideoEl.removeAttribute('src'); theatreJukeVideoEl.dataset.jukeId = ''; try { theatreJukeVideoEl.load(); } catch (e) {} }
+  try { if (theatre.player && theatre.playerReady && theatre.player.unMute) theatre.player.unMute(); } catch (e) {}
+  theatreApplyVolume();
+  if (saved) {
+    theatre.videoId = saved.videoId;
+    theatre.title = saved.title;
+    theatre.addedBy = saved.addedBy;
+    theatre.playing = saved.playing;
+    theatre.position = saved.position;
+    theatre.startedAt = saved.startedAt;
+    theatreApplyState();
+  }
+  try { theatreRender(); } catch (e) {}
+}
+
 function theatreRender() {
-  if (theatreNoteEl) theatreNoteEl.textContent = theatre.playerError
+  if (theatreNoteEl) theatreNoteEl.textContent = theatre.jukeMode
+    ? '🎬 showing the jukebox — ' + String(theatre.jukeTitle || 'now playing').slice(0, 60)
+    : (theatre.playerError
     ? theatre.errorMsg // build 80: the player said why — not a black screen
     : (theatre.playBlocked
       ? 'tap \u25b6 on this phone to start the movie' // build 79: autoplay-block hint
       : (theatre.videoId
         ? 'now showing on the big screen — look up'
-        : 'paste a youtube link — it plays on the big screen'));
-  if (theatreByEl) theatreByEl.textContent = theatre.videoId ? ('queued by ' + (theatre.addedBy || 'a drifter')) : '';
+        : 'paste a youtube link — it plays on the big screen')));
+  if (theatreByEl) theatreByEl.textContent = theatre.jukeMode
+    ? 'from the jukebox · queued by ' + ((typeof juke !== 'undefined' && juke.now && juke.now.addedBy) || 'a drifter')
+    : (theatre.videoId ? ('queued by ' + (theatre.addedBy || 'a drifter')) : '');
   if (theatrePlayPauseEl) theatrePlayPauseEl.innerHTML = theatre.playing ? '&#10074;&#10074;' : '&#9654;';
   // build 79: link diagnostic — the read-back line for sync issues
   const linkEl = document.getElementById('theatre-link');
@@ -7167,6 +7584,7 @@ function theatreTogglePlay() {
 }
 
 function handleTheatreAdd(peerId, d) {
+  if (theatre.jukeMode) return; // build 5b: the jukebox owns the screen
   if (!d || typeof d.videoId !== 'string' || !d.videoId) return;
   // server check — same as jukebox
   if (d.srv != null && String(d.srv) !== nexusServerKey(selectedServer)) return;
@@ -7186,6 +7604,7 @@ function handleTheatreAdd(peerId, d) {
 }
 
 function handleTheatrePlay(peerId, d) {
+  if (theatre.jukeMode) return; // build 5b: the jukebox owns the screen
   if (!d || typeof d.videoId !== 'string' || !d.videoId) return;
   if (d.srv != null && String(d.srv) !== nexusServerKey(selectedServer)) return;
   if (!theatreSeqFresh(peerId, d)) return; // build 80: stale (late answer) — drop
@@ -7215,6 +7634,7 @@ function handleTheatrePlay(peerId, d) {
 }
 
 function handleTheatrePause(peerId, d) {
+  if (theatre.jukeMode) return; // build 5b: the jukebox owns the screen
   if (!d || typeof d.videoId !== 'string' || !d.videoId) return;
   if (d.srv != null && String(d.srv) !== nexusServerKey(selectedServer)) return;
   if (!theatreSeqFresh(peerId, d)) return; // build 80: stale (late answer) — drop
@@ -7261,6 +7681,7 @@ function theatreClearPlayBlock() {
    immediately; everyone else waits a beat so the host's authoritative
    state wins and late answers can't fight it. */
 function handleTheatreStateReq(peerId, d) {
+  if (theatre.jukeMode) return; // build 5b: don't advertise juke state as theatre state
   if (!theatre.videoId) return;
   if (d && d.srv != null && String(d.srv) !== nexusServerKey(selectedServer)) return;
   const answer = () => {
@@ -7304,6 +7725,9 @@ function theatreOnRealm(key) {
   theatrePanel.style.display = inTheatre ? '' : 'none';
   if (inTheatre) {
     theatreEnsurePlayer();
+    // build 5b: if the jukebox is playing, the screen shows IT — a
+    // walk-in lands on the session at the room-clock position.
+    try { theatreSyncToJuke(); } catch (e) {}
     theatreRender();
     // Build 79: late joiner always asks what's playing — a phone holding a
     // stale videoId would otherwise never catch up. The in-sync skip in
@@ -7516,8 +7940,11 @@ function theatreHomography(src, dst) {
 
 function theatreScreenTick() {
   if (!theatreScreen3dEl) return;
+  try { theatreJukeTick(); } catch (e) {}
   const mesh = active && active.key === THEATRE_ROOM_KEY && active.anim ? active.anim.screenMesh : null;
-  const show = !!(mesh && theatre.videoId && theatre.playerReady);
+  // build 5b: a juke-driven screen shows even when the theatre's own
+  // player has nothing — the juke layer/card is the picture then.
+  const show = !!(mesh && ((theatre.videoId && theatre.playerReady) || theatre.jukeMode));
   if (!show) {
     if (theatreScreen3dEl.style.display !== 'none') theatreScreen3dEl.style.display = 'none';
     return;
@@ -15455,6 +15882,22 @@ window.__limbo = {
   // HOLOVERSE build 4: endless box hooks for smoke tests
   endlessState: () => ({ inBox: !!(active && active.key === ENDLESS_ROOM_KEY), depth: endless.depth, whoosh: endless.whooshT >= 0, whooshT: endless.whooshT, pending: endless.pending, cooldown: endless.cooldown, inMini: endless.inMini, inDoor: endless.inDoor, transitioning, fov: camera.fov, hud: depthHudEl ? depthHudEl.textContent : null, hudShown: depthHudEl ? depthHudEl.style.display : null, parentScale: worlds[ENDLESS_DEF.key] ? worlds[ENDLESS_DEF.key].endlessCopies.parent.group.scale.x : null, miniScale: worlds[ENDLESS_DEF.key] ? worlds[ENDLESS_DEF.key].endlessCopies.current.child.group.scale.x : null, miniY: worlds[ENDLESS_DEF.key] ? worlds[ENDLESS_DEF.key].endlessCopies.current.child.group.position.y : null }),
   nexusPortals: () => (worlds.nexus ? worlds.nexus.portals.map((p) => p.target) : []),
+  // HOLOVERSE build 5a: cue link hooks for the two-app relay prove-out
+  cueState: () => (cueClient ? {
+    room: cueClient.room, cid: cueCid, sockets: cueClient.sockets,
+    iAmHolder: cueClient.iAmHolder, holderCid: cueClient.holderCid, holderName: cueClient.holderName,
+    roster: [...cueClient.roster.keys()],
+    queue: cueClient.queue.map((t) => ({ id: t.id, title: t.title, provider: t.provider, addedBy: t.addedBy })),
+    now: cueClient.now ? { id: cueClient.now.id, title: cueClient.now.title, startedAt: cueClient.now.startedAt } : null,
+    skipVotes: cueClient.skipVotes.size,
+    jukeNow: juke.now ? { id: juke.now.id, title: juke.now.title } : null,
+    jukeQueue: juke.queue.map((t) => t.id),
+    msgLog: cueClient.msgLog || [],
+  } : null),
+  cueLink: (code) => cueLinkStart(code),
+  cueUnlink: () => cueLinkStop(false),
+  cueVoteSkip: () => { if (cueClient) cueClient.voteSkip(); },
+  jukeClear: () => jukeClearQueue(),
   // HOLOVERSE build 3: queue hooks for smoke tests
   swapMatch: (track, candidates) => swapMatch(track, candidates),
   swapCardState: () => ({ state: swapState ? (swapState.winner ? 'offer' : 'nomatch') : (swapCardEl && swapCardEl.style.display !== 'none' ? 'open' : 'closed'), winner: swapState && swapState.winner ? swapState.winner.videoId : null }),
@@ -15642,6 +16085,27 @@ window.__limbo = {
     return document.getElementById('theatre-link').textContent;
   },
   theatreExtractId: (u) => theatreExtractId(u),
+  // HOLOVERSE build 5b: jukebox-driven screen hooks
+  theatreJuke: () => ({
+    mode: theatre.jukeMode, kind: theatre.jukeKind, id: theatre.jukeId,
+    videoId: theatre.videoId, playing: theatre.playing,
+    screenShown: theatreScreen3dEl ? theatreScreen3dEl.style.display !== 'none' : false,
+    layerShown: theatreJukeLayerEl ? theatreJukeLayerEl.style.display !== 'none' : false,
+    cardShown: theatreJukeCardEl ? theatreJukeCardEl.style.display !== 'none' : false,
+    cardTitle: theatreJukeTitleEl ? theatreJukeTitleEl.textContent : null,
+    videoShown: theatreJukeVideoEl ? theatreJukeVideoEl.style.display !== 'none' : false,
+    videoPos: theatreJukeVideoEl ? theatreJukeVideoEl.currentTime : null,
+  }),
+  theatreYtPos: () => { try { return theatre.player && theatre.player.getCurrentTime ? theatre.player.getCurrentTime() : null; } catch (e) { return null; } },
+  theatreYtState: () => { try { return theatre.player && theatre.player.getPlayerState ? theatre.player.getPlayerState() : null; } catch (e) { return null; } },
+  theatreDiag: () => ({
+    hasPlayer: !!theatre.player, ready: theatre.playerReady, err: theatre.playerError,
+    videoId: theatre.videoId, playing: theatre.playing, position: theatre.position,
+    startedAt: theatre.startedAt, playBlocked: theatre.playBlocked,
+    curId: (() => { try { return theatre.player && theatre.player.getVideoData ? (theatre.player.getVideoData().video_id || '') : null; } catch (e) { return 'THREW'; } })(),
+    link: (document.getElementById('theatre-link') || {}).textContent || '',
+  }),
+  jukePlayerPos: () => { try { return juke.player && juke.player.pos ? juke.player.pos() : null; } catch (e) { return null; } },
   /* build 33 test seam: fake a live jukebox track to drive the like pill */
   jukeFakePlaying: (id) => {
     juke.now = { id: String(id), stopped: false, title: 'test track' };
