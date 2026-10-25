@@ -9,12 +9,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { AudioEngine } from './audio.js?v=3';
-import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=3';
-import { CouchNet } from './couch.js?v=3';
-import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=3';
-import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=3';
-import * as Avatar from './avatar.js?v=3';
+import { AudioEngine } from './audio.js?v=4';
+import { LimboNet, NEXUS_SERVERS, nexusServerKey, isNexusServerKey } from './net.js?v=4';
+import { CouchNet } from './couch.js?v=4';
+import { computeFlocks, meanHeading, FLOCK_R } from './flock.js?v=4';
+import { quantizeUp, estimateBpm, OnsetDetector, playSynthNote, synthNoteOn, synthNoteOff, synthAllOff, playBassNote, playDrum, playDrumSample, renderDrumKits, DRUM_KITS, drumVariantName, drumVariantCount, playPadChord, JAM_CHORDS, JAM_DRUMS, makeImpulseResponse, jamMetroClick, synthVoiceCount, createSynthFx } from './jam.js?v=4';
+import * as Avatar from './avatar.js?v=4';
 
 /* Build 47: the build number rides the script's own ?v= cache-bust, so
    the stamp below can never drift from what's actually running. */
@@ -95,6 +95,16 @@ const WORKSHOP_ROOM_KEY = WORKSHOP_DEF.key;
    Its own P2P room, like the sound room. */
 const THEATRE_DEF = { key: 'theatre', name: 'THEATRE', accent: 0xff5566, root: 120.0 };
 const THEATRE_ROOM_KEY = THEATRE_DEF.key;
+/* HOLOVERSE build 4 — THE ENDLESS BOX: a chamber that contains a miniature
+   of itself on its plinth, inside a giant copy of itself. Step into the
+   miniature to descend; out the exit door to ascend. Endless both ways —
+   depth is just an integer, the 3 copies recycle by relabeling. NOT a
+   progression realm (like the sound room): no echoes, no attunement. */
+const ENDLESS_DEF = { key: 'endlessbox', name: 'THE ENDLESS BOX', accent: 0xb18cff, root: 82.41 };
+const ENDLESS_ROOM_KEY = ENDLESS_DEF.key; // world key used by goTo()
+const EB_R = 1 / 7;              // the nesting ratio, held everywhere
+const EB_PLINTH_TOP = 1.7;       // y of the plinth's top step (mini sits here)
+const EB_CHAMBER = 26;           // chamber width/depth; height 12
 const NEXUS_BOUND = 40;       // horizontal leash in the hub
 const PORTAL_TRIGGER = 3.0;   // wisp-to-portal distance that teleports
 const ECHO_TRIGGER = 2.6;     // wisp-to-echo distance that collects
@@ -230,6 +240,7 @@ function roomKeyFor(worldKey) {
   if (worldKey === SOUND_ROOM_KEY) return 'limbo-realm-5';
   if (worldKey === JOURNEY_ROOM_KEY) return 'limbo-realm-6';
   if (worldKey === WORKSHOP_ROOM_KEY) return 'limbo-realm-7';
+  if (worldKey === ENDLESS_ROOM_KEY) return 'limbo-realm-8';
   return 'limbo-realm-' + worldKey.replace('realm', '');
 }
 
@@ -1346,6 +1357,8 @@ function realmDisplayName(key) {
   if (key === SOUND_ROOM_KEY) return SOUND_DEF.name;
   if (key === JOURNEY_ROOM_KEY) return JOURNEY_DEF.name;
   if (key === WORKSHOP_ROOM_KEY) return WORKSHOP_DEF.name;
+  if (key === THEATRE_ROOM_KEY) return THEATRE_DEF.name;
+  if (key === ENDLESS_ROOM_KEY) return ENDLESS_DEF.name;
   const d = REALM_DEFS.find((r) => r.key === key);
   return d ? d.name : String(key || '').toUpperCase();
 }
@@ -8789,6 +8802,32 @@ function makeFightTexture() {
   return tex;
 }
 
+/* HOLOVERSE build 4: portal art for the Endless Box — nested squares
+   shrinking into a bright core. The whole idea in one glyph. */
+function makeEndlessTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#07040f';
+  g.fillRect(0, 0, 256, 256);
+  const grad = g.createRadialGradient(128, 128, 8, 128, 128, 150);
+  grad.addColorStop(0, 'rgba(177,140,255,0.55)');
+  grad.addColorStop(1, 'rgba(177,140,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 256, 256);
+  g.lineWidth = 7;
+  for (let i = 0; i < 5; i++) {
+    const inset = 18 + i * 24;
+    g.strokeStyle = `rgba(${205 - i * 10},${175 - i * 6},255,${1 - i * 0.12})`;
+    g.strokeRect(inset, inset, 256 - inset * 2, 256 - inset * 2);
+  }
+  g.fillStyle = '#f2ebff';
+  g.fillRect(120, 120, 16, 16);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /* Procedural portal art for the journey room: a migrating-bird V of
    chevrons on deep blue — the flock, heading somewhere. */
 function makeJourneyTexture() {
@@ -12581,6 +12620,340 @@ function updateJourney(dt, t) {
   }
 }
 
+/* ================= HOLOVERSE build 4: THE ENDLESS BOX =================
+   A chamber containing a miniature of itself, inside a giant copy of
+   itself. One template, built three times (parent ×7, current ×1,
+   miniature ×1/7 — plus the miniature's own miniature, because the
+   template recurses twice). Level changes never build or load anything:
+   the copies are identical, so a swap is RECYCLING BY RELABEL — depth
+   counter + a player teleport through the scale mapping + a retint,
+   masked by a ~300ms FOV whoosh while the player's motion and facing
+   carry straight through. Descend: fly into the miniature on the plinth.
+   Ascend: fly out the exit door (north wall) — you emerge standing on
+   the parent chamber's plinth, the room you left now its miniature. */
+
+let ebFloorTex = null;
+function makeEndlessFloorTexture() {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 512;
+  const g = c.getContext('2d');
+  g.fillStyle = '#0b0a14';
+  g.fillRect(0, 0, 512, 512);
+  g.strokeStyle = 'rgba(140,130,190,0.13)';
+  g.lineWidth = 1;
+  for (let i = 0; i <= 512; i += 32) {
+    g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 512); g.stroke();
+    g.beginPath(); g.moveTo(0, i); g.lineTo(512, i); g.stroke();
+  }
+  // nested squares etched around the plinth, glowing a little brighter inward
+  for (let i = 0; i < 6; i++) {
+    const inset = 26 + i * 34;
+    g.strokeStyle = `rgba(177,140,255,${0.16 + i * 0.1})`;
+    g.lineWidth = 2.5;
+    g.strokeRect(inset, inset, 512 - inset * 2, 512 - inset * 2);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/* One chamber. `nest` = how many miniature levels to recurse (the copy
+   you stand in carries 2: its miniature, and the miniature's miniature).
+   `withMini:false` builds the parent shell — our own chamber sits where
+   its miniature would be, so the slot stays empty. Tint targets are
+   collected so each copy can be re-hued for the depth it represents. */
+function endlessChamber({ nest = 0, withMini = true, labels = false, lights = 0 } = {}) {
+  if (!ebFloorTex) ebFloorTex = makeEndlessFloorTexture();
+  const accent = ENDLESS_DEF.accent;
+  const grp = new THREE.Group();
+  const tint = { mats: [], lights: [] };
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x14121f, roughness: 0.95, metalness: 0.05 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x0a0913, roughness: 1 });
+  const floorMat = new THREE.MeshStandardMaterial({ map: ebFloorTex, color: 0x847da6, roughness: 0.9, metalness: 0.1 });
+  const plinthMat = new THREE.MeshStandardMaterial({ color: 0x1a1728, roughness: 0.6, metalness: 0.35 });
+  const trimMat = new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 1.1, roughness: 0.35, metalness: 0.6 });
+  tint.mats.push(trimMat);
+  const W = EB_CHAMBER, H = 12, half = W / 2;
+
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, W), floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  grp.add(floor);
+
+  // Walls. North carries the exit door (3.4 wide × 4.6 high, centred).
+  const mkWall = (w, h, x, y, z, ry) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), wallMat);
+    m.position.set(x, y, z); m.rotation.y = ry; grp.add(m); return m;
+  };
+  mkWall(W, H, 0, H / 2, half, Math.PI);            // south
+  mkWall(W, H, half, H / 2, 0, -Math.PI / 2);       // east
+  mkWall(W, H, -half, H / 2, 0, Math.PI / 2);       // west
+  const segW = (W - 3.4) / 2;
+  mkWall(segW, H, -(1.7 + segW / 2), H / 2, -half, 0); // north-left
+  mkWall(segW, H, (1.7 + segW / 2), H / 2, -half, 0);  // north-right
+  mkWall(3.4, H - 4.6, 0, 4.6 + (H - 4.6) / 2, -half, 0); // north lintel
+
+  // The room's signature on the south wall: the nested-squares emblem.
+  const emblem = new THREE.Mesh(
+    new THREE.PlaneGeometry(7.5, 7.5),
+    new THREE.MeshBasicMaterial({ map: makeEndlessTexture() })
+  );
+  emblem.position.set(0, 6.6, half - 0.06);
+  emblem.rotation.y = Math.PI;
+  grp.add(emblem);
+
+  // Ceiling frame with a 9×9 oculus; glass so the parent is a view, not a leak.
+  const slabMat = darkMat;
+  const slab = (w, d, x, z) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.4, d), slabMat);
+    m.position.set(x, H, z); grp.add(m);
+  };
+  slab(W, 8.5, 0, -8.75); slab(W, 8.5, 0, 8.75);
+  slab(8.5, 9, -8.75, 0); slab(8.5, 9, 8.75, 0);
+  const glass = new THREE.Mesh(
+    new THREE.PlaneGeometry(9, 9),
+    new THREE.MeshStandardMaterial({ color: 0x8fb7ff, transparent: true, opacity: 0.13, roughness: 0.15, metalness: 0.4, side: THREE.DoubleSide, depthWrite: false })
+  );
+  glass.rotation.x = Math.PI / 2;
+  glass.position.y = H - 0.15;
+  grp.add(glass);
+
+  // Exit door: trim frame + alcove + the glow of the bigger room beyond.
+  for (const sx of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.35, 4.6, 0.5), trimMat);
+    post.position.set(sx * 1.875, 2.3, -half + 0.1); grp.add(post);
+  }
+  const lintelBar = new THREE.Mesh(new THREE.BoxGeometry(4.1, 0.35, 0.5), trimMat);
+  lintelBar.position.set(0, 4.78, -half + 0.1); grp.add(lintelBar);
+  const alcove = new THREE.Mesh(new THREE.BoxGeometry(3.4, 4.6, 1.8),
+    new THREE.MeshStandardMaterial({ color: 0x07060e, roughness: 1, side: THREE.BackSide }));
+  alcove.position.set(0, 2.3, -half - 0.9); grp.add(alcove);
+  const doorGlowMat = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.8 });
+  tint.mats.push(doorGlowMat);
+  const doorGlow = new THREE.Mesh(new THREE.PlaneGeometry(3.3, 4.5), doorGlowMat);
+  doorGlow.position.set(0, 2.3, -half - 1.75); grp.add(doorGlow);
+
+  // Plinth: two steps; the miniature lives on top.
+  const base = new THREE.Mesh(new THREE.BoxGeometry(9, 1.0, 9), plinthMat);
+  base.position.y = 0.5; grp.add(base);
+  const step = new THREE.Mesh(new THREE.BoxGeometry(6, 0.7, 6), plinthMat);
+  step.position.y = 1.35; grp.add(step);
+  const rim = new THREE.Mesh(new THREE.BoxGeometry(6.3, 0.07, 6.3), trimMat);
+  rim.position.y = EB_PLINTH_TOP - 0.035; grp.add(rim);
+  // Wall-top trim strips — the tint reads around the whole room.
+  for (const [w, x, z, ry] of [[W, 0, -half + 0.12, 0], [W, 0, half - 0.12, 0], [W, -half + 0.12, 0, 1], [W, half - 0.12, 0, 1]]) {
+    const s = new THREE.Mesh(new THREE.BoxGeometry(w, 0.18, 0.18), trimMat);
+    s.position.set(x, H - 0.7, z); if (ry) s.rotation.y = Math.PI / 2; grp.add(s);
+  }
+
+  // The sigil: three nested square outlines, floating, turning slowly.
+  const sigil = new THREE.Group();
+  const sigilMat = new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: 0.9 });
+  tint.mats.push(sigilMat);
+  [3.6, 2.4, 1.25].forEach((sz, i) => {
+    const eg = new THREE.EdgesGeometry(new THREE.PlaneGeometry(sz, sz));
+    const ln = new THREE.LineSegments(eg, sigilMat);
+    ln.rotation.x = -Math.PI / 2;
+    ln.position.y = i * 0.55;
+    sigil.add(ln);
+  });
+  sigil.position.set(0, 6.6, 0);
+  grp.add(sigil);
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: accent, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
+  tint.mats.push(halo.material);
+  halo.scale.set(13, 13, 1); halo.position.set(0, 8.6, 0); grp.add(halo);
+
+  grp.add(new THREE.AmbientLight(0x8899bb, lights >= 2 ? 0.7 : 0.55));
+  if (lights >= 1) {
+    // Parent copies are scaled ×7: their light must throw across a
+    // 182-wide room in world units, so it runs far hotter than the
+    // chamber-scale key light (physical decay, three r160).
+    const pl = new THREE.PointLight(accent, lights >= 2 ? 55 : 2600, 0, lights >= 2 ? 1.5 : 1.6);
+    pl.position.set(0, 9.5, 0); grp.add(pl); tint.lights.push(pl);
+  }
+  if (lights >= 2) {
+    const pl2 = new THREE.PointLight(0xbfd0ff, 26, 40, 1.8);
+    pl2.position.set(0, 4, 9); grp.add(pl2);
+  }
+
+  let child = null;
+  if (withMini && nest > 0) {
+    child = endlessChamber({ nest: nest - 1, withMini: true, labels: false, lights: 0 });
+    child.group.scale.setScalar(EB_R);
+    child.group.position.y = EB_PLINTH_TOP + 0.02; // 2cm lift: its floor is coplanar with the plinth step otherwise (z-fight)
+    grp.add(child.group);
+  }
+  if (labels) {
+    const inLbl = makeLabel('STEP IN · GO DEEPER', 40);
+    inLbl.scale.set(5.2, 1.3, 1); inLbl.position.set(0, 4.55, 3.6); grp.add(inLbl);
+    const outLbl = makeLabel('OUT · GO BIGGER', 40);
+    outLbl.scale.set(6.4, 1.6, 1); outLbl.position.set(0, 6.35, -half + 0.8); grp.add(outLbl);
+  }
+  return { group: grp, tint, sigil, child };
+}
+
+function buildEndlessBox() {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x050310);
+  scene.fog = new THREE.FogExp2(0x0d0722, 0.0075);
+  // The parent shell: our chamber IS its miniature, so its nest slot is empty.
+  const parent = endlessChamber({ nest: 0, withMini: false, lights: 1 });
+  parent.group.scale.setScalar(1 / EB_R);
+  parent.group.position.y = -EB_PLINTH_TOP / EB_R;
+  scene.add(parent.group);
+  const current = endlessChamber({ nest: 2, withMini: true, labels: true, lights: 2 });
+  current.group.position.y = 0.02; // sits ON the parent's plinth top (y=0) — lift off the coplanar face
+  scene.add(current.group);
+
+  const dust = makeDust(240, 13, ENDLESS_DEF.accent, 0.5);
+  dust.pts.position.y = 5.5;
+  scene.add(dust.pts);
+
+  const { group, ring } = makePortal(makeEndlessTexture(), ENDLESS_DEF.accent, 'RETURN', 1.7, 0.14);
+  group.position.set(-10.6, 2.6, 10.6); // corner: never inside a swap-arrival zone
+  group.lookAt(0, 4.2, 0);
+  scene.add(group);
+  const portals = [{ group, ring, pos: group.position.clone(), target: 'nexus', phase: 0.6, baseY: 2.6 }];
+
+  return {
+    key: ENDLESS_DEF.key, name: ENDLESS_DEF.name, root: ENDLESS_DEF.root,
+    scene, portals, echoes: [],
+    spawn: new THREE.Vector3(0, 2, 7.5), spawnYaw: 0, // face the plinth + door (-Z)
+    bound: 'endlessbox',
+    attunedShown: true, // n/a: no echoes here
+    endlessCopies: { parent, current },
+    anim: { dust },
+    update(dt, t) {
+      for (const cp of [this.endlessCopies.parent, this.endlessCopies.current, this.endlessCopies.current.child, this.endlessCopies.current.child && this.endlessCopies.current.child.child]) {
+        if (cp && cp.sigil) { cp.sigil.rotation.y += dt * 0.25; cp.sigil.position.y = 6.6 + Math.sin(t * 0.6) * 0.25; }
+      }
+      const p = this.anim.dust.pts.geometry.attributes.position.array;
+      const d = this.anim.dust;
+      for (let i = 0; i < d.count; i++) {
+        p[i * 3 + 1] = d.base[i * 3 + 1] + Math.sin(t * 0.22 + d.phase[i]) * 1.4;
+        p[i * 3] = d.base[i * 3] + Math.cos(t * 0.16 + d.phase[i]) * 1.1;
+      }
+      d.pts.geometry.attributes.position.needsUpdate = true;
+      for (const pt of this.portals) {
+        pt.group.position.y = pt.baseY + Math.sin(t * 0.8 + pt.phase) * 0.3;
+        pt.ring.rotation.z += dt * 0.18;
+        pt.pos.copy(pt.group.position);
+      }
+    },
+  };
+}
+
+/* ---------------- the endless box: depth state ---------------- */
+const endless = {
+  depth: 0,
+  whooshT: -1,   // <0 idle; 0..1 while the rescale pulse runs
+  pending: 0,    // -1 descend / +1 ascend, applied at the pulse peak
+  cooldown: 0,
+  inMini: false, inDoor: false, // zone latches: must leave before re-firing
+  hudText: null,
+};
+const depthHudEl = document.getElementById('depth-hud');
+function endlessDepthText(d) { return d === 0 ? 'SURFACE' : (d < 0 ? '−' + (-d) : '+' + d); }
+
+const _ebBaseCol = new THREE.Color(ENDLESS_DEF.accent);
+const _ebHsl = {};
+function ebDepthColor(depth, out) {
+  _ebBaseCol.getHSL(_ebHsl);
+  out.setHSL(((_ebHsl.h + depth * 0.055) % 1 + 1) % 1, Math.min(1, _ebHsl.s + 0.04), _ebHsl.l);
+  return out;
+}
+const _ebTmpCol = new THREE.Color();
+/* Re-hue every copy for the depth it currently represents. The scene's
+   fog + background take the current depth's tint, darkened — travelling
+   deeper visibly cools the air. */
+function endlessApplyTints() {
+  const w = worlds[ENDLESS_DEF.key];
+  if (!w || !w.endlessCopies) return;
+  const d = endless.depth;
+  const paint = (cp, dep) => {
+    if (!cp) return;
+    ebDepthColor(dep, _ebTmpCol);
+    for (const m of cp.tint.mats) {
+      if (m.emissive) { m.emissive.copy(_ebTmpCol); m.color.copy(_ebTmpCol); }
+      else m.color.copy(_ebTmpCol);
+    }
+    for (const li of cp.tint.lights) li.color.copy(_ebTmpCol);
+  };
+  paint(w.endlessCopies.current, d);
+  paint(w.endlessCopies.current.child, d - 1);
+  if (w.endlessCopies.current.child) paint(w.endlessCopies.current.child.child, d - 2);
+  paint(w.endlessCopies.parent, d + 1);
+  ebDepthColor(d, _ebTmpCol);
+  w.scene.fog.color.copy(_ebTmpCol).multiplyScalar(0.16);
+  w.scene.background.copy(_ebTmpCol).multiplyScalar(0.05);
+}
+function endlessOnEnter() {
+  endless.depth = 0;
+  endless.whooshT = -1; endless.pending = 0; endless.cooldown = 0;
+  endless.inMini = endless.inDoor = false;
+  endlessApplyTints();
+  endless.hudText = null; // force HUD refresh in tick
+  addSystemLine('🌀 the endless box — fly into the small room on the plinth to go deeper · out the door to grow');
+}
+function endlessOnLeave() {
+  if (endless.whooshT >= 0) { camera.fov = 70; camera.updateProjectionMatrix(); endless.whooshT = -1; endless.pending = 0; }
+  if (depthHudEl) depthHudEl.style.display = 'none';
+}
+/* The swap itself, fired at the whoosh's peak. Descend maps chamber-local
+   coords through the scale: where you touched the miniature is where you
+   stand inside it. Ascend puts you on the parent plinth just north of its
+   miniature — you walked out of it. Velocity and facing carry through. */
+function endlessSwap(dir) {
+  endless.depth += dir;
+  endless.hudText = endlessDepthText(endless.depth); // HUD moves WITH the swap, not a tick later
+  if (depthHudEl) depthHudEl.textContent = endless.hudText;
+  const p = wisp.position;
+  if (dir < 0) {
+    const nx = Math.max(-11.6, Math.min(11.6, p.x / EB_R));
+    const nz = Math.max(-11.6, Math.min(11.6, p.z / EB_R));
+    wisp.position.set(nx, Math.max(1.7, Math.min(3.2, p.y)), nz);
+  } else {
+    wisp.position.set(Math.max(-1.4, Math.min(1.4, p.x * EB_R)), 2.4, -3.9);
+  }
+  clearTrail();
+  lastTransition = clock.elapsedTime; // settle: no portal may fire on a swap arrival
+  // Latches are re-derived from the ARRIVAL spot, not left to tick order:
+  // arriving inside a zone means "already in it" (step out to re-fire);
+  // arriving outside clears the latch even if no tick saw you there.
+  endless.inMini = Math.hypot(p.x, p.z) < 2.6 && p.y > 1.25 && p.y < 4.9;
+  endless.inDoor = p.z < -12.25 && Math.abs(p.x) < 1.7 && p.y < 4.5;
+  endlessApplyTints();
+}
+function endlessTick(dt, t) {
+  const inBox = !!(active && active.key === ENDLESS_ROOM_KEY);
+  if (depthHudEl) {
+    const want = inBox ? 'block' : 'none';
+    if (depthHudEl.style.display !== want) depthHudEl.style.display = want;
+  }
+  if (!inBox) return;
+  const txt = endlessDepthText(endless.depth);
+  if (txt !== endless.hudText) { endless.hudText = txt; if (depthHudEl) depthHudEl.textContent = txt; }
+  if (endless.cooldown > 0) endless.cooldown -= dt;
+  if (endless.whooshT >= 0) {
+    endless.whooshT += dt / 0.32;
+    const pr = Math.min(1, endless.whooshT);
+    camera.fov = 70 + Math.sin(pr * Math.PI) * 14;
+    camera.updateProjectionMatrix();
+    if (pr >= 0.5 && endless.pending !== 0) { endlessSwap(endless.pending); endless.pending = 0; }
+    if (pr >= 1) { endless.whooshT = -1; camera.fov = 70; camera.updateProjectionMatrix(); endless.cooldown = 0.35; }
+    return; // no triggers mid-pulse
+  }
+  const p = wisp.position;
+  const hd = Math.hypot(p.x, p.z);
+  const inMini = hd < 2.6 && p.y > 1.25 && p.y < 4.9;
+  const inDoor = p.z < -12.25 && Math.abs(p.x) < 1.7 && p.y < 4.5;
+  if (!inMini) endless.inMini = false;
+  if (!inDoor) endless.inDoor = false;
+  if (transitioning || endless.cooldown > 0) return;
+  if (inMini && !endless.inMini) { endless.inMini = true; endless.pending = -1; endless.whooshT = 0; }
+  else if (inDoor && !endless.inDoor) { endless.inDoor = true; endless.pending = 1; endless.whooshT = 0; }
+}
+
 function buildNexus(textures) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x020204);
@@ -12609,6 +12982,9 @@ function buildNexus(textures) {
   }, {
     key: THEATRE_DEF.key, name: THEATRE_DEF.name, accent: THEATRE_DEF.accent,
     tex: makeTheatreTexture(),
+  }, {
+    key: ENDLESS_DEF.key, name: ENDLESS_DEF.name, accent: ENDLESS_DEF.accent,
+    tex: makeEndlessTexture(),
   }, {
     // HOLOVERSE: the FIGHT portal — SMASHVR plugged into the verse. Not a
     // world: `external` portals open their URL instead of goTo().
@@ -13124,6 +13500,8 @@ function finishBoot() {
     worlds[JOURNEY_DEF.key] = buildJourneyRoom();
     worlds[WORKSHOP_DEF.key] = buildWorkshop();
     worlds[THEATRE_DEF.key] = buildTheatre();
+    worlds[ENDLESS_DEF.key] = buildEndlessBox();
+    endlessApplyTints(); // HOLOVERSE build 4: paint the copies for depth 0
     try { stageLoad(); stageRebuild(); } catch (e) { /* stage starts empty */ }
     try { fohRestore(); } catch (e) { /* FOH starts at defaults */ }
   } catch (err) {
@@ -13782,6 +14160,8 @@ function goTo(key) {
   if (active && active.key === SOUND_ROOM_KEY && key !== SOUND_ROOM_KEY) { jamMicOff(); }
   // Leaving the journey: park the album, restore the wisp.
   if (active && active.key === JOURNEY_ROOM_KEY && key !== JOURNEY_ROOM_KEY) { journeyOnLeave(); }
+  // HOLOVERSE build 4: leaving the box mid-whoosh must not strand the FOV.
+  if (active && active.key === ENDLESS_ROOM_KEY && key !== ENDLESS_ROOM_KEY) { endlessOnLeave(); }
   transitioning = true;
   fadeEl.classList.add('on');
   setTimeout(() => {
@@ -13826,6 +14206,7 @@ function goTo(key) {
       }, 2000);
     }
     if (key === JOURNEY_ROOM_KEY) journeyOnEnter();
+    if (key === ENDLESS_ROOM_KEY) endlessOnEnter(); // HOLOVERSE build 4: depth resets to SURFACE
     if (key === WORKSHOP_ROOM_KEY) setWorkshopPanel(true); // the bench opens itself
     // Build 69: model room late-joiner — clear the shelf and ask the room
     // for everyone's models. Peers already here answer with modelShare.
@@ -14266,6 +14647,8 @@ net.onAvatarChunkCb = (peerId, d) => {
   });
 }
 net.avatarMeta = () => (myAvatar && myAvatarH16) ? { h: myAvatarH16, n: myAvatar.name } : null;
+/* HOLOVERSE build 4: our Endless Box depth rides the wisp (net.js `e`). */
+net.endlessDepth = () => (active && active.key === ENDLESS_ROOM_KEY) ? endless.depth : 0;
 bootAvatar();
 
 /* ================= HOLOVERSE build 2: instrument zones =================
@@ -14360,7 +14743,25 @@ function handleWisp(id, d) {
     return;
   }
   const nm = String(d.n || 'drifter').slice(0, 16) || 'drifter';
-  peerPositions.set(id, new THREE.Vector3(d.p[0], d.p[1], d.p[2])); // proximity table
+  // HOLOVERSE build 4: Endless Box depth gating. Same room ≠ same scale.
+  // A peer one depth DOWN renders as a tiny marker inside my miniature
+  // (their chamber-local coords through the scale mapping); a peer at any
+  // other depth isn't in my box at all. Older builds send no `e` → 0.
+  let ebMarker = false;
+  let ebPos = null;
+  if (active && active.key === ENDLESS_ROOM_KEY) {
+    const e = (typeof d.e === 'number' && isFinite(d.e)) ? d.e | 0 : 0;
+    if (e === endless.depth - 1) {
+      ebMarker = true;
+      ebPos = [d.p[0] * EB_R, EB_PLINTH_TOP + d.p[1] * EB_R, d.p[2] * EB_R];
+    } else if (e !== endless.depth) {
+      if (peerVisuals.has(id)) removePeerVisual(id, false);
+      else { peerPositions.delete(id); peerHeadings.delete(id); }
+      return;
+    }
+  }
+  const tp = ebPos || d.p;
+  peerPositions.set(id, new THREE.Vector3(tp[0], tp[1], tp[2])); // proximity table
   if (d.f && Array.isArray(d.f) && d.f.length >= 3) peerHeadings.set(id, { x: +d.f[0], y: +d.f[1], z: +d.f[2] }); // flock heading
   let pv = peerVisuals.get(id);
   if (!pv) {
@@ -14370,7 +14771,7 @@ function handleWisp(id, d) {
     pv.hatId = d.h || null; applyPeerHat(pv, pv.hatId);
     pv.trailStyle = d.t || null; pv.trailColor = d.c || null;
     applyPeerTrail(pv, pv.trailStyle, pv.trailColor);
-    pv.target.set(d.p[0], d.p[1], d.p[2]);
+    pv.target.set(tp[0], tp[1], tp[2]);
     pv.group.position.copy(pv.target); // snap on first sight
     pv.trailObj.clear(pv.group.position); // no streak from the origin
     peerVisuals.set(id, pv);
@@ -14380,7 +14781,7 @@ function handleWisp(id, d) {
     updatePeerCount();
     if (typeof wsShelfRender === 'function') wsShelfRender(); // build 69: room shelf roster
   } else {
-    pv.target.set(d.p[0], d.p[1], d.p[2]);
+    pv.target.set(tp[0], tp[1], tp[2]);
     if (pv.name !== nm) { pv.name = nm; retagPeer(pv, nm); if (typeof wsShelfRender === 'function') wsShelfRender(); }
     const s = d.s || null, h = d.h || null;
     if (pv.skin !== s) { pv.skin = s; applyPeerSkin(pv, s); }
@@ -14390,6 +14791,14 @@ function handleWisp(id, d) {
       pv.trailStyle = ts; pv.trailColor = tc;
       applyPeerTrail(pv, ts, tc);
     }
+  }
+  // HOLOVERSE build 4: scale flips (normal ⇄ miniature marker) snap —
+  // lerping across scales would streak the peer through the room.
+  if (!!pv.endlessMarker !== ebMarker) {
+    pv.endlessMarker = ebMarker;
+    pv.group.scale.setScalar(ebMarker ? EB_R : 1);
+    pv.group.position.copy(pv.target);
+    if (pv.trailObj) pv.trailObj.clear(pv.group.position);
   }
   peerAvatarReconcile(pv, d.a); // HOLOVERSE: their VRM, if they carry one
 }
@@ -14810,6 +15219,13 @@ function updatePlayer(dt) {
     wisp.position.x = Math.max(-52, Math.min(52, wisp.position.x));
     wisp.position.y = Math.max(-8, Math.min(36, wisp.position.y));
     wisp.position.z = Math.max(-54, Math.min(32, wisp.position.z));
+  } else if (active.bound === 'endlessbox') {
+    // HOLOVERSE build 4: the chamber walls are the world — same box at
+    // every depth. z leash runs a little past the north wall so the wisp
+    // can dip into the exit-door alcove (the ascend trigger lives there).
+    wisp.position.x = Math.max(-12.2, Math.min(12.2, wisp.position.x));
+    wisp.position.y = Math.max(0.35, Math.min(11.2, wisp.position.y));
+    wisp.position.z = Math.max(-13.4, Math.min(12.2, wisp.position.z));
   } else if (active.bound === 'journey') {
     // the open field: soft push-back at the fog wall, hard clamp at the edge
     wisp.position.y = Math.max(J_MIN_Y, Math.min(J_MAX_Y, wisp.position.y));
@@ -14948,6 +15364,7 @@ function loop() {
   if (rush.active) rushUpdate(dt);
   else { updatePlayer(dt); checkPortals(); checkEchoes(); }
   zoneTick(clock.elapsedTime); // HOLOVERSE build 2: instrument rings
+  endlessTick(dt, clock.elapsedTime); // HOLOVERSE build 4: box depth triggers + whoosh
 
   // Multiplayer: broadcast our wisp, ease remote wisps toward their targets.
   if (started) {
@@ -14962,7 +15379,7 @@ function loop() {
       pv.bob.position.y = Math.sin(t * 2.2 + pv.phase) * 0.3;      // Floating chat bubbles: rise, fade, vanish after BUBBLE_SECS.
       // Remote trails: short + low-res, skipped beyond 150m for perf.
       const pd = pv.group.position.distanceTo(wisp.position);
-      const showTrail = pd < 150;
+      const showTrail = pd < 150 && !pv.endlessMarker; // build 4: markers in the miniature draw no trail
       pv.trailObj.group.visible = showTrail;
       if (showTrail) pv.trailObj.update(pv.group.position, dt);
       // HOLOVERSE: animate a peer's VRM (stride from their real movement).
@@ -15035,6 +15452,9 @@ window.__limbo = {
   avatarPeerState: () => [...peerVisuals.values()].map((pv) => ({ id: pv.id, hash: pv.avatarHash, hasVisual: !!pv.avatarVisual, orbVisible: pv.core.visible })),
   // HOLOVERSE build 2: zone hooks for smoke tests
   zoneState: () => ({ zone: jamZone ? jamZone.id : null, zones: (active && active.zones) ? active.zones.map((z) => z.id) : null, jamOpen: jam.open, jamInst: jam.instrument }),
+  // HOLOVERSE build 4: endless box hooks for smoke tests
+  endlessState: () => ({ inBox: !!(active && active.key === ENDLESS_ROOM_KEY), depth: endless.depth, whoosh: endless.whooshT >= 0, whooshT: endless.whooshT, pending: endless.pending, cooldown: endless.cooldown, inMini: endless.inMini, inDoor: endless.inDoor, transitioning, fov: camera.fov, hud: depthHudEl ? depthHudEl.textContent : null, hudShown: depthHudEl ? depthHudEl.style.display : null, parentScale: worlds[ENDLESS_DEF.key] ? worlds[ENDLESS_DEF.key].endlessCopies.parent.group.scale.x : null, miniScale: worlds[ENDLESS_DEF.key] ? worlds[ENDLESS_DEF.key].endlessCopies.current.child.group.scale.x : null, miniY: worlds[ENDLESS_DEF.key] ? worlds[ENDLESS_DEF.key].endlessCopies.current.child.group.position.y : null }),
+  nexusPortals: () => (worlds.nexus ? worlds.nexus.portals.map((p) => p.target) : []),
   // HOLOVERSE build 3: queue hooks for smoke tests
   swapMatch: (track, candidates) => swapMatch(track, candidates),
   swapCardState: () => ({ state: swapState ? (swapState.winner ? 'offer' : 'nomatch') : (swapCardEl && swapCardEl.style.display !== 'none' ? 'open' : 'closed'), winner: swapState && swapState.winner ? swapState.winner.videoId : null }),

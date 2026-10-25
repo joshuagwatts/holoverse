@@ -2020,6 +2020,14 @@ export class LimboNet {
         const am = (typeof this.avatarMeta === 'function') ? this.avatarMeta() : null;
         if (am && am.h) wisp.a = { h: String(am.h).slice(0, 16), n: String(am.n || 'avatar.vrm').slice(0, 48) };
       } catch (e) { /* ignore */ }
+      // HOLOVERSE build 4: in the Endless Box, advertise our depth so
+      // peers can render us at the right scale (same depth = normal,
+      // one down = a tiny marker in their miniature). game.js supplies
+      // endlessDepth(); absent/elsewhere it reads as surface (0).
+      try {
+        const ed = (typeof this.endlessDepth === 'function') ? this.endlessDepth() : null;
+        if (typeof ed === 'number' && isFinite(ed)) wisp.e = ed | 0;
+      } catch (e) { /* ignore */ }
       // build 106: stamp my current location — the session channel is
       // server-wide, so receivers render only drifters in their room.
       if (this.roomKey) wisp.l = String(this.roomKey).slice(0, 24);

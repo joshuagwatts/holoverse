@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#020204">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="css/style.css?v=3">
+<link rel="stylesheet" href="css/style.css?v=4">
 <script type="importmap">
 {
   "imports": {
@@ -26,8 +26,8 @@
 </script>
 <!-- build 34: vendored QR libs (classic scripts -> window.qrcode / window.jsQR).
      Local files, not a CDN — the couch co-op ceremony must work offline. -->
-<script src="js/vendor/qrcode.js?v=3"></script>
-<script src="js/vendor/jsqr.js?v=3"></script>
+<script src="js/vendor/qrcode.js?v=4"></script>
+<script src="js/vendor/jsqr.js?v=4"></script>
 <!-- HOLOVERSE build 1: no service worker yet — the page always loads
      fresh from Pages (document is no-cache, assets carry ?v= busts). -->
 </head>
@@ -51,6 +51,8 @@
   <div id="realm-name">THE NEXUS</div>
   <div id="echo-counter">ECHOES 0 / 20</div>
   <div id="peer-count">DRIFTERS HERE: 1</div>
+  <!-- HOLOVERSE build 4: Endless Box depth readout — the only chrome the box adds -->
+  <div id="depth-hud" style="display:none">SURFACE</div>
   <div id="controls-hint">WASD / ARROWS — FLY&nbsp;&nbsp;·&nbsp;&nbsp;DRAG — LOOK&nbsp;&nbsp;·&nbsp;&nbsp;SPACE / SHIFT — RISE / SINK&nbsp;&nbsp;·&nbsp;&nbsp;T — CHAT&nbsp;&nbsp;·&nbsp;&nbsp;M — MUTE</div>
   <div id="mute-label">SOUND ON</div>
 </div>
@@ -654,6 +656,6 @@
 <!-- minimal touch joystick UI -->
 <div id="joy-base"><div id="joy-knob"></div></div>
 
-<script type="module" src="js/game.js?v=3"></script>
+<script type="module" src="js/game.js?v=4"></script>
 </body>
 </html>

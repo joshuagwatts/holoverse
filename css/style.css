@@ -2189,6 +2189,16 @@ html { -webkit-text-size-adjust: 100%; }
 .avatar-set-row { display: flex; gap: 8px; margin: 6px 0 4px; }
 .avatar-set-row button { flex: 1; }
 
+/* ================= HOLOVERSE build 4: endless box depth readout ====== */
+#depth-hud {
+  position: fixed; left: 50%; top: calc(58px + env(safe-area-inset-top)); transform: translateX(-50%);
+  z-index: 31; pointer-events: none; user-select: none; -webkit-user-select: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px; font-weight: 600; letter-spacing: 0.34em; padding-left: 0.34em;
+  color: #cdb8ff; text-shadow: 0 0 14px rgba(177, 140, 255, 0.85), 0 1px 6px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+}
+
 /* ================= HOLOVERSE build 2: instrument zone prompt ========= */
 #zone-prompt {
   position: fixed; left: 50%; bottom: 15%; transform: translateX(-50%);
